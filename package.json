@@ -1,25 +1,8 @@
 {
-  "name": "smart-support-agent",
+  "name": "kubao-support-agent",
   "version": "1.0.0",
   "private": true,
-  "description": "哭包 · 智能客服 Agent —— 多轮对话、FAQ 知识库检索、意图识别、自动转人工、坐席工单队列与满意度统计",
-  "keywords": [
-    "customer-service",
-    "support-agent",
-    "chatbot",
-    "llm",
-    "faq",
-    "rag"
-  ],
-  "homepage": "https://github.com/cry-88/kubao-support-agent#readme",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/cry-88/kubao-support-agent.git"
-  },
-  "bugs": {
-    "url": "https://github.com/cry-88/kubao-support-agent/issues"
-  },
-  "author": "cry-88",
+  "description": "哭包 · 智能客服 Agent —— 多轮对话 / FAQ 检索 / 意图识别 / 自动转人工 / 坐席工单 / 满意度统计",
   "license": "MIT",
   "engines": {
     "node": ">=18"

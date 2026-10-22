@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>页面不存在 · 哭包智能客服</title>
+  <link rel="icon" href="data:," />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f4f6fb;
+      color: #0f172a;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      padding: 24px;
+    }
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: #fff;
+      border: 1px solid #e8ecf4;
+      border-radius: 18px;
+      box-shadow: 0 2px 4px rgba(15, 23, 42, .04), 0 12px 28px rgba(15, 23, 42, .07);
+      padding: 32px 28px;
+      text-align: center;
+    }
+    .mark {
+      width: 46px; height: 46px; border-radius: 14px; margin: 0 auto 16px;
+      background: linear-gradient(135deg, #2b5cff, #7aa0ff);
+      color: #fff; font-size: 20px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 8px 20px rgba(43, 92, 255, .25);
+    }
+    h1 { margin: 0 0 8px; font-size: 20px; font-weight: 680; }
+    p { margin: 0 0 22px; font-size: 13.5px; line-height: 1.7; color: #64748b; }
+    a.btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 38px; padding: 0 20px; border-radius: 10px;
+      background: #2b5cff; color: #fff; text-decoration: none;
+      font-size: 13.5px; font-weight: 600;
+    }
+    a.btn:hover { background: #1f47cc; }
+    .hint { margin-top: 14px; font-size: 11.5px; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="mark">哭</div>
+    <h1>这个页面走丢了</h1>
+    <p>你访问的地址不存在，可能是链接过期或路径有误。<br />3 秒后自动回到首页，也可以点下面的按钮。</p>
+    <a class="btn" id="backHome" href="./">返回首页</a>
+    <div class="hint">哭包智能客服 · 404</div>
+  </div>
+  <script>
+    (function () {
+      // 兼容两种部署路径：GitHub Pages 的子路径 /kubao-support-agent/ 与本地根路径 /
+      var marker = '/kubao-support-agent/';
+      var p = location.pathname;
+      var i = p.indexOf(marker);
+      var root = i >= 0 ? p.slice(0, i + marker.length) : '/';
+      var link = document.getElementById('backHome');
+      if (link) link.setAttribute('href', root);
+      setTimeout(function () { location.replace(root); }, 3000);
+    })();
+  </script>
+</body>
+</html>

@@ -3,6 +3,9 @@ name: Deploy to GitHub Pages
 # 推送到 main 时自动：语法检查 → 敏感信息扫描 → 发布到 GitHub Pages
 # 也可在 Actions 页面手动触发（Run workflow）
 #
+# 站点地址：https://cry-88.github.io/kubao-support-agent/
+# 首次使用需在 Settings → Pages → Source 选择「GitHub Actions」
+#
 # ⚠️ 重要提醒
 # 云服务按「来源域名」做精确校验。GitHub Pages 的域名（*.github.io）与
 # 已登记的应用域名不同，因此 Pages 上的页面能打开，但数据读写与大模型调用
@@ -47,7 +50,7 @@ jobs:
       - name: 入口文件完整性
         run: |
           set -e
-          for f in index.html admin.html assets/config.js assets/app.js assets/kb.js schema.sql; do
+          for f in index.html admin.html 404.html assets/config.js assets/app.js assets/kb.js schema.sql; do
             test -f "$f" || { echo "::error::缺少 $f"; exit 1; }
             echo "✔ $f"
           done
