@@ -76,3 +76,6 @@ __pycache__/
 ._*
 Thumbs.db
 desktop.ini
+
+# ===== 内部开发笔记（Agent 工作记忆，不进公开仓库）=====
+.workbuddy/
