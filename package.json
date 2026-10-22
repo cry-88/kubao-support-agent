@@ -9,7 +9,8 @@
   },
   "scripts": {
     "start": "node server.js",
-    "serve": "node server.js"
+    "serve": "node server.js",
+    "test": "node --test test/analytics.test.js test/chat-task.test.js test/http.test.js"
   },
   "dependencies": {}
 }
