@@ -66,6 +66,8 @@ test.before(async () => {
       CS_ADMIN_CODE: ADMIN,
       CS_ANALYTICS_RATE: '6',
       CS_CORS_ORIGINS: 'http://allowed.test',
+      CS_TRUST_PROXY: 'true',
+      CS_LOGIN_MAX_PER_IP: '3',
       CS_LOG_LEVEL: 'info',
       CS_LOG_FORMAT: 'json',
       CS_BODY_LIMIT_BYTES: '4096',
@@ -436,6 +438,56 @@ test('看板聚合接口：坐席口令被拒（不消耗分析额度）', async
   const r = await rpc('cs_admin_dashboard', { p_code: 'kubao-agent-1', p_days: 14 });
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.error, 'unauthorized');
+});
+
+/* ------------------------- 阶段6：可信代理与 IP 维度限流 ------------------------- */
+
+test('可信代理：X-Forwarded-For 被当作客户端地址写进访问日志', async () => {
+  await fetch(BASE + '/api/models', { headers: { 'X-Forwarded-For': '203.0.113.9' } });
+  assert.ok(await waitForLog('"remote_addr":"203.0.113.9"'));
+  const line = LOG_BUF.split('\n')
+    .filter((l) => l.indexOf('"remote_addr":"203.0.113.9"') >= 0)
+    .pop();
+  const obj = JSON.parse(line);
+  assert.strictEqual(obj.ip_source, 'x-forwarded-for');
+  assert.strictEqual(obj.event, 'http.request');
+});
+
+test('IP+口令：不同来源 IP 各自独立的限流桶', async () => {
+  // 用另一个"客户端 IP"打分析接口：它应与 127.0.0.1 的桶互不影响
+  const res = await fetch(BASE + '/api/rpc', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.9' },
+    body: JSON.stringify({ name: 'cs_admin_analytics', params: { p_code: ADMIN, p_query: '评价分布' } }),
+  });
+  const j = await res.json();
+  assert.strictEqual(j.data.ok, true);
+
+  assert.ok(await waitForLog('"event":"analytics.query"'));
+  const line = LOG_BUF.split('\n')
+    .filter((l) => l.indexOf('"event":"analytics.query"') >= 0)
+    .pop();
+  const obj = JSON.parse(line);
+  assert.match(obj.actor, /^admin:[a-f0-9]{8}@203\.0\.113\.9$/, '限流键应为 口令指纹@IP');
+});
+
+test('登录防爆破：同一来源 IP 连续失败达阈值即锁定', async () => {
+  let blocked = null;
+  for (let i = 0; i < 8; i += 1) {
+    const r = await rpc('cs_console_login', { p_code: 'wrong-' + i });
+    if (r.ok === false && r.error === 'too_many_attempts') {
+      blocked = r;
+      break;
+    }
+  }
+  assert.ok(blocked, '连续失败应触发按 IP 锁定');
+  assert.ok(await waitForLog('"scope":"ip"'));
+  const line = LOG_BUF.split('\n')
+    .filter((l) => l.indexOf('"event":"auth.lockout"') >= 0 && l.indexOf('"scope":"ip"') >= 0)
+    .pop();
+  const obj = JSON.parse(line);
+  assert.strictEqual(obj.level, 'error');
+  assert.strictEqual(obj.result, 'reject');
 });
 
 test('分析限流：超过阈值返回可读提示（阈值由 CS_ANALYTICS_RATE 控制）', async () => {

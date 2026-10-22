@@ -216,7 +216,22 @@ function build(env) {
       analyticsPerMinute: toInt('CS_ANALYTICS_RATE', e.CS_ANALYTICS_RATE, 1, 600, profile.analyticsPerMinute),
       loginMaxPerCode: toInt('CS_LOGIN_MAX_PER_CODE', e.CS_LOGIN_MAX_PER_CODE, 1, 100, 5),
       loginMaxGlobal: toInt('CS_LOGIN_MAX_GLOBAL', e.CS_LOGIN_MAX_GLOBAL, 1, 1000, 20),
+      loginMaxPerIp: toInt('CS_LOGIN_MAX_PER_IP', e.CS_LOGIN_MAX_PER_IP, 1, 1000, 10),
       loginWindowMinutes: toInt('CS_LOGIN_WINDOW_MIN', e.CS_LOGIN_WINDOW_MIN, 1, 1440, 10),
+    },
+
+    /**
+     * 可信代理：只有"对端是已知代理"时才采信 X-Forwarded-For。
+     * 生产默认开启（Nginx 与 Node 同机，对端是 127.0.0.1），开发默认关闭。
+     */
+    proxy: {
+      trust: toBool(e.CS_TRUST_PROXY, nodeEnv === 'production'),
+      trusted: e.CS_TRUSTED_PROXIES != null ? toList(e.CS_TRUSTED_PROXIES) : ['127.0.0.1', '::1'],
+      isTrusted(ip) {
+        const list = e.CS_TRUSTED_PROXIES != null ? toList(e.CS_TRUSTED_PROXIES) : ['127.0.0.1', '::1'];
+        const s = String(ip || '').replace(/^::ffff:/i, '');
+        return list.indexOf(s) >= 0;
+      },
     },
 
     cors: {

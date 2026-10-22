@@ -23,6 +23,21 @@ function maskGuest(key) {
   return s ? s.slice(0, 6) + '***' : null;
 }
 
+/** 当前请求的真实客户端 IP（由 server.js 在入口解析后放进日志上下文） */
+function ctxIp() {
+  const ctx = logger.currentContext();
+  return ctx.ip || '-';
+}
+
+/**
+ * 管理侧限流键：口令指纹 + 客户端 IP
+ * 只按口令会让"同一个管理员在多地/多标签页"共用一个桶；
+ * 只按 IP 又会让同一出口 NAT 下的多个管理员互相影响。两者组合才符合直觉。
+ */
+function adminActor(code) {
+  return 'admin:' + md5(code).slice(0, 8) + '@' + ctxIp();
+}
+
 const { md5 } = store;
 
 function nowIso() {
@@ -317,6 +332,7 @@ function csLookupOrder(p, db) {
 function csConsoleLogin(p, db) {
   const code = String(p.p_code == null ? '' : p.p_code);
   const hash = md5(code);
+  const ip = ctxIp();
   const L = APP_CONFIG.limits;
   const windowMs = L.loginWindowMinutes * 60 * 1000;
   const since = Date.now() - windowMs;
@@ -333,6 +349,23 @@ function csConsoleLogin(p, db) {
       failures: globalFail,
       window_minutes: L.loginWindowMinutes,
       result: 'reject',
+      ip,
+    });
+    return { ok: false, error: 'too_many_attempts' };
+  }
+
+  // 按来源 IP 计数：防止单机换着口令撞库，也避免把整站全局阈值打满（可用性 DoS）
+  const ipFail = db.login_attempts.filter(
+    (a) => a.ok === false && a.ip === ip && new Date(a.created_at).getTime() > since
+  ).length;
+  if (ipFail >= L.loginMaxPerIp) {
+    log.error('登录已按来源 IP 锁定', {
+      event: 'auth.lockout',
+      scope: 'ip',
+      failures: ipFail,
+      window_minutes: L.loginWindowMinutes,
+      result: 'reject',
+      ip,
     });
     return { ok: false, error: 'too_many_attempts' };
   }
@@ -347,13 +380,20 @@ function csConsoleLogin(p, db) {
       failures: codeFail,
       window_minutes: L.loginWindowMinutes,
       result: 'reject',
+      ip,
     });
     return { ok: false, error: 'too_many_attempts' };
   }
 
   const who = operator(code, db);
   if (!who) {
-    db.login_attempts.push({ id: store.nextId('login_attempts'), code_hash: hash, ok: false, created_at: nowIso() });
+    db.login_attempts.push({
+      id: store.nextId('login_attempts'),
+      code_hash: hash,
+      ok: false,
+      ip,
+      created_at: nowIso(),
+    });
     store.save();
     log.warn('登录失败', {
       event: 'auth.login',
@@ -361,11 +401,20 @@ function csConsoleLogin(p, db) {
       reason: 'bad_code',
       code_failures: codeFail + 1,
       global_failures: globalFail + 1,
+      ip_failures: ipFail + 1,
       limit_per_code: L.loginMaxPerCode,
+      limit_per_ip: L.loginMaxPerIp,
+      ip,
     });
     return { ok: false, error: 'unauthorized' };
   }
-  db.login_attempts.push({ id: store.nextId('login_attempts'), code_hash: hash, ok: true, created_at: nowIso() });
+  db.login_attempts.push({
+    id: store.nextId('login_attempts'),
+    code_hash: hash,
+    ok: true,
+    ip,
+    created_at: nowIso(),
+  });
   if (who.agent) who.agent.last_seen_at = nowIso();
   store.save();
   log.info('登录成功', {
@@ -374,6 +423,7 @@ function csConsoleLogin(p, db) {
     operator_id: who.operator_id,
     operator_name: who.operator_name,
     is_admin: who.is_admin,
+    ip,
   });
   return { ok: true, agent_id: who.operator_id, name: who.operator_name, is_admin: who.is_admin };
 }
@@ -828,7 +878,7 @@ function csAdminExport(p, db) {
         dsl: p.p_dsl || null,
         text: p.p_query || '',
         db,
-        actor: 'admin:' + md5(p.p_code).slice(0, 8),
+        actor: adminActor(p.p_code),
         modelParse: null,
       })
       .then((result) => {
@@ -898,7 +948,7 @@ async function csAdminAnalytics(p, db) {
     text: p.p_query || '',
     dsl: p.p_dsl || null,
     db,
-    actor: 'admin:' + md5(p.p_code).slice(0, 8),
+    actor: adminActor(p.p_code),
     modelParse: reply.parseAnalyticsFallback,
   });
   return result;
@@ -916,7 +966,7 @@ function csAdminDashboard(p, db) {
     db,
     days: p.p_days,
     topN: p.p_top_n,
-    actor: 'admin:' + md5(p.p_code).slice(0, 8),
+    actor: adminActor(p.p_code),
   });
 }
 
