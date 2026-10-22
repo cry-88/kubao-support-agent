@@ -166,16 +166,26 @@ kubao-support-agent/
 ├── LICENSE               # MIT
 ├── schema.sql            # 一次性初始化脚本：建表 + RLS + 28 个 RPC 函数 + 种子数据
 ├── assets/
+│   ├── runtime.js        # 运行模式声明：'server'（服务器版）/ 'static'（Pages 静态版）
 │   ├── config.js         # 云服务公开配置 + 客户端初始化 + RPC 解包
 │   ├── kb.js             # 意图规则、FAQ 检索、提示词构造
 │   ├── app.js            # 聊天页逻辑：对话、流式、摘要、转人工、评分
 │   ├── admin.js          # 后台逻辑：队列、认领、统计、知识库、导出
+│   ├── dashboard.js      # 管理看板：原生 SVG 折线图 / 环形图
 │   ├── styles.css        # 通用样式
 │   └── admin.css         # 后台图表与队列样式
+├── server.js             # 零依赖 HTTP 服务：路由 + 静态资源 + CORS + 优雅退出
+├── server/               # 后端：config / logger / store / rpc / reply / analytics / health
+├── scripts/
+│   ├── package.sh        # 服务器版打包（git 清单 + sha256）
+│   └── build-pages.sh    # Pages 静态版构建，产出 dist-pages/
+├── deploy/               # Linux 部署：install / rollback / backup / nginx / systemd
 ├── docs/screenshots/     # 界面截图（见「界面截图」）
 └── .github/workflows/
-    └── deploy-pages.yml  # CI：语法检查 + 密钥扫描 + Pages 发布
+    └── deploy-pages.yml  # CI：语法检查 + 测试 + 密钥扫描 + 构建 + Pages 发布
 ```
+
+> `dist-pages/` 只在本地构建验证时生成，已在 `.gitignore` 中忽略；CI 里是临时产物，不会进仓库。
 
 ---
 
@@ -217,12 +227,12 @@ window.CLOUD_PUBLIC_CONFIG = {
 **正确取值的顺序不能反：**
 
 1. 在平台开通云服务，拿到 `publicConfig` 的四个字段（`endpoint` / `publishableKey` / `oauthRelayBaseUrl` / `resourceId`）
-2. 把项目发布到云托管，得到形如 `https://xxx.app.workbuddy.host` 的域名
+2. 把项目部署到服务器（见「第 5 步 A」），得到你自己的访问域名
 3. 把第 1 步的 `endpoint` 回填进 `config.js`，它必须与第 2 步的域名**完全一致**（含 `https://`，不带路径与查询串）
 
 **三个常见坑：**
 
-- 填成 `https://cry-88.github.io/...` → 必然 403，Pages 域名不在白名单
+- 填成 `https://cry-88.github.io/...` → 必然 403，Pages 域名不在白名单（静态版因此默认改为不发任何请求）
 - 填成别的应用的域名 → 数据读写会串到别人的环境
 - 换了发布域名但没同步 `config.js` → 页面能打开，但所有请求被拒
 
@@ -250,19 +260,46 @@ INSERT INTO cs_agents (name, code) VALUES ('你的客服', '你的工号口令')
 
 ### 第 5 步：发布上线
 
-**A. 发布到云托管（推荐，功能完整）**
+**A. 发布到 Linux 服务器（推荐，功能完整）**
 
-把目录作为静态站点 / Node 服务发布，入口 `index.html`，服务监听 `$PORT` 并绑定 `0.0.0.0`（`server.js` 已实现）。发布后拿到形如 `https://xxx.app.workbuddy.host` 的域名，并把该域名回填到 `config.js` 的 `endpoint`。
+`Node（systemd 常驻）+ Nginx（TLS 与真实 IP 透传）`，零容器、零 npm 依赖。步骤与命令清单见 [`docs/stage6-deploy.md`](docs/stage6-deploy.md)：
+
+```bash
+./scripts/package.sh                       # 本地打包（含 sha256 与包内容自检）
+scp dist/kubao-support-*.tar.gz* <user>@<host>:/tmp/
+sudo /opt/kubao-support/app/deploy/install.sh -p /tmp/kubao-support-*.tar.gz
+```
 
 **B. 发布到 GitHub Pages（自动，仅静态预览）**
 
 1. 仓库 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**
 2. push 到 `main`，或到 **Actions → Deploy to GitHub Pages → Run workflow** 手动触发
-3. 站点地址：`https://cry-88.github.io/kubao-support-agent/`
+3. 站点地址不变：`https://cry-88.github.io/kubao-support-agent/`
+
+CI 会先跑「语法检查 → 入口完整性 → `npm test` → 密钥扫描 → schema 结构检查」，再执行 `scripts/build-pages.sh` 构建，最后只把 `dist-pages/` 作为产物发布。本地想先验证：
+
+```bash
+bash scripts/build-pages.sh     # 产出 dist-pages/
+python -m http.server 8099 -d dist-pages   # 打开 http://localhost:8099
+```
+
+**静态版怎么来的（不维护第二套前端）**
+
+页面文件与服务器版完全同源，唯一差异是 `assets/runtime.js`：
+
+| 文件 | 服务器版 | Pages 静态版 |
+|---|---|---|
+| `assets/runtime.js` | `window.__CS_MODE__ = 'server'` | 构建时改写为 `'static'` |
+| `index.html` / `admin.html` / `assets/*` | 同一份 | 同一份 |
 
 > [!WARNING]
-> **Pages 版本只做静态预览，不跑任何业务。** 云服务按来源域名精确校验，`*.github.io` 与已登记的应用域名不同，数据读写与大模型调用都会被拒绝。
-> 代码已内置**静态预览模式**：检测到 `*.github.io` 时不发起任何云端请求，禁用输入框与登录按钮，页面顶部提示「静态预览模式」。想看真实对话、后台与统计，必须访问云托管域名。
+> **Pages 版本只做静态预览，不跑任何业务。** 站点上没有后端进程，构建产物也不含 `server/`、`deploy/`、`data/`、`.env` 等任何文件（构建脚本有自检，混入即失败）。
+> 代码已内置**静态预览模式**：`__CS_MODE__ === 'static'` 时不发起任何后端请求，禁用输入框与登录按钮，页面顶部提示「静态预览模式」。想看真实对话、工单与看板数据，必须访问服务器部署版本。
+
+> [!NOTE]
+> 若确实要让静态站点连接一台远程后端（后端需放行该 Origin）：
+> `CS_PAGES_API_BASE=https://support.example.com bash scripts/build-pages.sh`
+> 此时模式为 `server` 且 `__CS_API_BASE__` 指向该地址，页面行为与服务器版一致。
 
 ---
 
@@ -462,6 +499,7 @@ sudo journalctl -u kubao-support -f   # 结构化日志
 | 摘要阈值 | `assets/app.js` → `SUMMARY_AFTER` / `SUMMARY_STEP` | 默认 12 条触发、每 6 条重算 |
 | 限流阈值 | 前端 `RATE` + 服务端 `cs_guest_append` | 前端 10/分钟，服务端 12/分钟 |
 | 云服务配置 | `assets/config.js` | 换环境时替换四个公开字段 |
+| 运行模式 | `assets/runtime.js` | `server`（默认）/ `static`（Pages 构建时自动改写） |
 
 ---
 
@@ -472,7 +510,7 @@ sudo journalctl -u kubao-support -f   # 结构化日志
 - 访客身份基于浏览器 `localStorage` 的随机密钥，清缓存或换设备会丢失历史
 - 摘要是全量重压，超长会话仍有优化空间（可改为旧摘要 + 新增消息的增量合并）
 - 限流以单浏览器为主，分布式刷量需在网关层加固
-- GitHub Pages 版本受 Origin 校验限制，只能看页面、不能用功能
+- GitHub Pages 版本是**静态预览模式**：页面与服务器版同源，但不发任何后端请求、后端代码也不进构建产物，只能看界面
 
 **后续可做**
 

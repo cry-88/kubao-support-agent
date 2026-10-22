@@ -996,10 +996,11 @@
   }
 
   /* ---------- 静态预览模式（GitHub Pages）----------
-   * 云服务按来源域名精确校验，*.github.io 不在白名单，
-   * 数据库与大模型调用必然失败。这里直接降级为纯静态展示，
-   * 不发起任何云端请求，避免满屏报错。 */
+   * 阶段7：模式由 assets/runtime.js 显式声明（window.__CS_MODE__），
+   * 兼容历史行为：没有声明时仍按 *.github.io 判断。
+   * 静态版不发起任何云端请求，避免满屏报错。 */
   function isStaticPreview() {
+    if (typeof window.isStaticMode === 'function') return window.isStaticMode();
     return /\.github\.io$/i.test(location.hostname);
   }
 
@@ -1007,18 +1008,18 @@
     state.preview = true;
     el.modelHint.textContent = '静态预览模式 · 不连接云端';
     el.input.disabled = true;
-    el.input.placeholder = '当前为静态预览版，对话功能需在云托管域名使用';
+    el.input.placeholder = '当前为静态预览版，对话功能需在服务器部署版本中使用';
     el.sendBtn.disabled = true;
     el.bannerWrap.innerHTML =
       '<div class="handoff-banner show" style="max-width:780px;margin:0 auto 8px;">' +
       '<span class="dot" style="color:#b45309"></span>' +
-      '<span><b>静态预览模式</b>：本页面只展示界面，数据读写与大模型调用需在云托管域名下运行。</span></div>';
+      '<span><b>静态预览模式</b>：本页面只展示界面，数据读写与智能应答需在服务器部署版本中使用。</span></div>';
     el.messages.innerHTML =
       '<div class="empty-state">' +
       '<div class="big-avatar">哭</div>' +
       '<h2>你好，我是哭包</h2>' +
       '<p>当前是 GitHub Pages 静态预览版，<b>不连接云端</b>，所以对话、历史记录与后台都不可用。<br/>' +
-      '完整功能请访问云托管域名。</p>' +
+      '完整功能请访问服务器部署版本。</p>' +
       '<div class="suggest">' +
       '<button data-noop="1">查订单物流</button>' +
       '<button data-noop="1">怎么申请退款</button>' +
@@ -1026,7 +1027,7 @@
       '</div></div>';
     Array.prototype.forEach.call(el.messages.querySelectorAll('[data-noop]'), function (btn) {
       btn.addEventListener('click', function () {
-        toast('静态预览模式：请在云托管域名下体验完整功能');
+        toast('静态预览模式：请在服务器部署版本中体验完整功能');
       });
     });
   }

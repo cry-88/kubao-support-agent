@@ -13,6 +13,19 @@
 (function () {
   'use strict';
 
+  /* 运行模式：优先读 assets/runtime.js 的显式声明，取不到再按域名兜底
+   *   static  → 纯前端演示，不发起任何后端请求
+   *   server  → 直连同源 /api/*（或 __CS_API_BASE__ 指定的地址）
+   * 兜底规则保留 *.github.io 判断，保证历史部署与本地直接打开都不受影响。 */
+  var MODE = window.__CS_MODE__ === 'static' || window.__CS_MODE__ === 'server'
+    ? window.__CS_MODE__
+    : (/\.github\.io$/i.test(location.hostname) ? 'static' : 'server');
+
+  window.CS_MODE = MODE;
+  window.isStaticMode = function isStaticMode() {
+    return window.CS_MODE === 'static';
+  };
+
   /** 数据面基址：默认同源相对路径；跨域/静态部署时由页面先设置 window.__CS_API_BASE__ */
   var BASE = (typeof window.__CS_API_BASE__ === 'string' ? window.__CS_API_BASE__ : '').replace(/\/+$/, '');
   function api(path) { return BASE + path; }

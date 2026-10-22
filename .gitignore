@@ -28,6 +28,7 @@ secrets.json
 
 # ===== 构建产物与缓存 =====
 dist/
+dist-pages/
 build/
 .cache/
 .parcel-cache/

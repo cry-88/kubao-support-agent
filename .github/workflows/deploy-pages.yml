@@ -1,16 +1,14 @@
 name: Deploy to GitHub Pages
 
-# 推送到 main 时自动：语法检查 → 敏感信息扫描 → 发布到 GitHub Pages
-# 也可在 Actions 页面手动触发（Run workflow）
+# 推送到 main 或手动触发：语法检查 → 单元/集成测试 → 敏感信息扫描 → 构建静态站点 → 发布 Pages
 #
-# 站点地址：https://cry-88.github.io/kubao-support-agent/
-# 首次使用需在 Settings → Pages → Source 选择「GitHub Actions」
+# 站点地址不变： https://cry-88.github.io/kubao-support-agent/
+# 首次使用需在 Settings → Pages → Source 选择「GitHub Actions」。
 #
-# ⚠️ 重要提醒
-# 云服务按「来源域名」做精确校验。GitHub Pages 的域名（*.github.io）与
-# 已登记的应用域名不同，因此 Pages 上的页面能打开，但数据读写与大模型调用
-# 会被拒绝。要在 Pages 上完整可用，需把 assets/config.js 换成允许该域名的
-# 云服务环境，或在上线域名上部署（推荐）。
+# 说明（阶段7）：
+#   Pages 上只有前端页面，构建时把 assets/runtime.js 改写成 __CS_MODE__='static'，
+#   页面进入静态预览模式：不发任何后端请求，只做界面演示。
+#   完整功能（对话、工单、看板真实数据）需访问服务器部署版本。
 
 on:
   push:
@@ -28,7 +26,7 @@ concurrency:
 
 jobs:
   check:
-    name: 检查
+    name: 检查与测试
     runs-on: ubuntu-latest
     steps:
       - name: 拉取代码
@@ -39,10 +37,10 @@ jobs:
         with:
           node-version: '20'
 
-      - name: 前端脚本语法检查
+      - name: 全量语法检查（后端 + 前端）
         run: |
           set -e
-          for f in assets/*.js; do
+          for f in server.js server/*.js server/analytics/*.js assets/*.js; do
             node --check "$f"
             echo "✔ $f"
           done
@@ -50,19 +48,25 @@ jobs:
       - name: 入口文件完整性
         run: |
           set -e
-          for f in index.html admin.html 404.html assets/config.js assets/app.js assets/kb.js schema.sql; do
+          for f in index.html admin.html 404.html \
+                   assets/runtime.js assets/config.js assets/app.js assets/kb.js \
+                   assets/admin.js assets/dashboard.js schema.sql; do
             test -f "$f" || { echo "::error::缺少 $f"; exit 1; }
             echo "✔ $f"
           done
 
+      - name: 单元与集成测试
+        run: npm test
+
       - name: 敏感信息扫描
         run: |
           set -e
-          PATTERN='(sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|-----BEGIN)'
-          # 排除本工作流文件，否则会命中上面这行正则自身
+          PATTERN='(sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY)'
+          # 排除本文件自身与构建产物
           if grep -rInE "$PATTERN" \
-               --include='*.js' --include='*.html' --include='*.md' --include='*.sql' --include='*.yml' \
-               --exclude='deploy-pages.yml' . ; then
+               --include='*.js' --include='*.html' --include='*.md' --include='*.sql' --include='*.yml' --include='*.sh' \
+               --exclude='deploy-pages.yml' \
+               --exclude-dir='dist' --exclude-dir='dist-pages' --exclude-dir='node_modules' . ; then
             echo "::error::检测到疑似密钥或私钥，已阻止部署"
             exit 1
           fi
@@ -78,7 +82,7 @@ jobs:
           test "$TABLES" -ge 7 || { echo "::error::表数量异常"; exit 1; }
 
   deploy:
-    name: 发布
+    name: 构建并发布
     needs: check
     runs-on: ubuntu-latest
     environment:
@@ -88,16 +92,24 @@ jobs:
       - name: 拉取代码
         uses: actions/checkout@v4
 
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: 配置 Pages
         uses: actions/configure-pages@v5
         with:
-          # 若仓库尚未启用 Pages，尝试自动开启（需 token 具备仓库管理权限）
           enablement: true
 
-      - name: 打包静态站点
+      # 只发布构建产物：后端代码、部署脚本、数据目录都不会进入站点
+      - name: 构建静态站点（dist-pages）
+        run: bash scripts/build-pages.sh
+
+      - name: 上传构建产物
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: dist-pages
 
       - name: 发布
         id: deployment
