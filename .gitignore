@@ -12,6 +12,9 @@ venv/
 .env.development
 .env.production
 .env.test
+# 各环境真实配置（模板 *.env.example 要保留）
+env/*.env
+!env/*.env.example
 # 模板文件要保留
 !.env.example
 *.pem
@@ -25,6 +28,7 @@ secrets.json
 
 # ===== 构建产物与缓存 =====
 dist/
+dist-pages/
 build/
 .cache/
 .parcel-cache/
@@ -33,6 +37,13 @@ build/
 tmp/
 temp/
 coverage/
+
+# ===== 业务数据与运行时文件（含口令，绝不入库）=====
+# data/store.json 里保存会话、消息、管理员与坐席口令，禁止提交
+data/
+*.sqlite
+*.sqlite3
+*.db
 
 # ===== 日志与临时文件 =====
 *.log
@@ -65,3 +76,6 @@ __pycache__/
 ._*
 Thumbs.db
 desktop.ini
+
+# ===== 内部开发笔记（Agent 工作记忆，不进公开仓库）=====
+.workbuddy/

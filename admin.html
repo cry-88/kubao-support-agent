@@ -114,6 +114,34 @@
           <div id="trendChart"></div>
           <div class="legend"><span><i></i>新增会话</span><span><i class="gray"></i>无会话</span></div>
         </div>
+
+        <!-- 阶段5 新增：数据分析看板。只追加容器，原有卡片与 renderStats 逻辑不动 -->
+        <div id="csDashboard" class="cs-dashboard">
+          <div class="grid-2">
+            <div class="card">
+              <h3>工单量趋势</h3>
+              <p class="hint" id="csTrendHint">新建 / 转人工 / 已解决三条曲线，悬停看当日数值</p>
+              <div class="cs-chart" id="csChartTrend"><div class="cs-chart-empty">加载中…</div></div>
+            </div>
+            <div class="card">
+              <h3>意图标签占比</h3>
+              <p class="hint" id="csIntentHint">窗口内新建工单的意图分布</p>
+              <div class="cs-chart" id="csChartIntent"><div class="cs-chart-empty">加载中…</div></div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:16px;">
+            <h3>坐席绩效</h3>
+            <p class="hint" id="csAgentHint">接单量、平均首响、解决率、好评率</p>
+            <div id="csAgentPerf"><div class="cs-chart-empty">加载中…</div></div>
+          </div>
+
+          <div class="card" style="margin-top:16px;">
+            <h3>知识缺口 Top 5</h3>
+            <p class="hint">FAQ 未命中的高频提问，点右侧按钮可直接去补知识库</p>
+            <div id="csGapTop"><div class="cs-chart-empty">加载中…</div></div>
+          </div>
+        </div>
       </section>
 
       <section id="tab-conversations" class="hidden">
@@ -239,8 +267,9 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js"></script>
-  <script src="assets/config.js?v=20261022b"></script>
-  <script src="assets/admin.js?v=20261022b"></script>
+  <script src="assets/runtime.js?v=20261022e"></script>
+  <script src="assets/config.js?v=20261022e"></script>
+  <script src="assets/admin.js?v=20261022e"></script>
+  <script src="assets/dashboard.js?v=20261022e"></script>
 </body>
 </html>

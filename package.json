@@ -1,6 +1,6 @@
 {
   "name": "kubao-support-agent",
-  "version": "1.0.0",
+  "version": "1.7.0",
   "private": true,
   "description": "哭包 · 智能客服 Agent —— 多轮对话 / FAQ 检索 / 意图识别 / 自动转人工 / 坐席工单 / 满意度统计",
   "license": "MIT",
@@ -9,9 +9,8 @@
   },
   "scripts": {
     "start": "node server.js",
-    "serve": "node server.js"
+    "serve": "node server.js",
+    "test": "node --test test/config.test.js test/client-ip.test.js test/logger.test.js test/analytics.test.js test/dashboard.test.js test/chat-task.test.js test/deploy.test.js test/pages.test.js test/http.test.js"
   },
-  "dependencies": {
-    "@tencent-ai/workbuddy-cloud-sdk": "dev"
-  }
+  "dependencies": {}
 }
