@@ -1,5 +1,8 @@
 # 哭包 · 智能客服 Agent
 
+[![Deploy to GitHub Pages](https://github.com/cry-88/-Agent-/actions/workflows/deploy-pages.yml/badge.svg)](https://github.com/cry-88/-Agent-/actions/workflows/deploy-pages.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 一个可以直接上线的**在线智能客服 Web 应用**：多轮对话、FAQ 知识库检索、意图识别、自动转人工、坐席工单队列、长会话摘要、管理后台与满意度统计。
 
 无需自建服务器与 API Key —— 数据持久化、大模型调用全部走 WorkBuddy 云服务，前端为纯静态站点，CDN 加载 SDK，零构建。
@@ -109,7 +112,10 @@ smart-support-agent/
 │   ├── admin.js          # 后台逻辑：队列、认领、统计、知识库、导出
 │   ├── styles.css        # 通用样式
 │   └── admin.css         # 后台图表与队列样式
+├── .github/workflows/
+│   └── deploy-pages.yml  # CI：语法检查 + 密钥扫描 + Pages 发布
 ├── .gitignore
+├── LICENSE               # MIT
 ├── schema.sql            # 建表 + RLS + 28 个 RPC 函数 + 种子数据
 └── README.md
 ```
@@ -203,6 +209,21 @@ python -m http.server 8080 --bind 0.0.0.0
 
 ---
 
+## 自动部署（GitHub Actions）
+
+推送到 `main` 会自动执行 [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml)：
+
+1. **检查阶段** — `node --check` 校验全部前端脚本；核对入口文件是否齐全；扫描常见密钥 / 私钥特征（命中即失败）；校验 `schema.sql` 的表与函数数量
+2. **发布阶段** — 打包仓库根目录，发布到 GitHub Pages
+
+启用方式：仓库 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**，之后 push 或手动 **Run workflow** 即可。
+
+> [!WARNING]
+> **Pages 上页面能打开，但业务不可用。** 云服务按来源域名做精确校验，`*.github.io` 与已登记的应用域名不同，数据读写与大模型调用都会被拒绝。
+> 想让 Pages 版本完整可用，需把 `assets/config.js` 换成允许该域名的云服务环境；否则请以正式上线域名为准。
+
+---
+
 ## 配置说明
 
 | 项 | 位置 | 说明 |
@@ -235,4 +256,4 @@ python -m http.server 8080 --bind 0.0.0.0
 
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 cry-88
