@@ -105,7 +105,8 @@ flowchart TB
 smart-support-agent/
 ├── index.html            # 用户端聊天页
 ├── admin.html            # 坐席 / 管理后台（按口令区分角色）
-├── package.json          # 依赖记录（无构建脚本，node_modules 不入库）
+├── package.json          # 依赖记录 + start 脚本（node_modules 不入库）
+├── server.js             # 零依赖静态服务器：本地预览 / 部署启动入口
 ├── assets/
 │   ├── config.js         # 云服务公开配置 + 客户端初始化 + RPC 解包
 │   ├── kb.js             # 意图规则、FAQ 检索、提示词构造
@@ -189,7 +190,7 @@ smart-support-agent/
 ## 本地运行
 
 ```bash
-python -m http.server 8080 --bind 0.0.0.0
+npm start          # 等价于 node server.js，也可直接 python -m http.server 8080
 # 打开 http://localhost:8080
 ```
 

@@ -24,6 +24,10 @@
   "engines": {
     "node": ">=18"
   },
+  "scripts": {
+    "start": "node server.js",
+    "serve": "node server.js"
+  },
   "dependencies": {
     "@tencent-ai/workbuddy-cloud-sdk": "dev"
   }
