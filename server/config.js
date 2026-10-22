@@ -30,6 +30,7 @@ const PROFILES = {
   development: {
     label: '开发',
     logLevel: 'debug',
+    logFormat: 'text',
     cacheStatic: false,
     chatPerMinute: 12,
     analyticsPerMinute: 30,
@@ -40,6 +41,7 @@ const PROFILES = {
   test: {
     label: '测试',
     logLevel: 'warn',
+    logFormat: 'text',
     cacheStatic: false,
     chatPerMinute: 60,
     analyticsPerMinute: 60,
@@ -50,6 +52,7 @@ const PROFILES = {
   production: {
     label: '生产',
     logLevel: 'info',
+    logFormat: 'json',
     cacheStatic: true,
     chatPerMinute: 12,
     analyticsPerMinute: 30,
@@ -135,6 +138,13 @@ function build(env) {
 
   const logLevel = String(e.CS_LOG_LEVEL || profile.logLevel).trim().toLowerCase();
   if (!LOG_LEVELS[logLevel]) fail('CS_LOG_LEVEL 只支持 debug / info / warn / error，当前值：' + logLevel);
+
+  const logFormat = String(e.CS_LOG_FORMAT || profile.logFormat).trim().toLowerCase();
+  if (logFormat !== 'json' && logFormat !== 'text') {
+    fail('CS_LOG_FORMAT 只支持 json / text，当前值：' + logFormat);
+  }
+  // 生产默认不输出堆栈（日志会进集中采集）；排查时可用 CS_LOG_STACK=true 临时打开
+  const includeStack = toBool(e.CS_LOG_STACK, nodeEnv !== 'production');
 
   const staticRootRaw = String(e.CS_STATIC_ROOT || '.').trim();
   const staticRoot = path.resolve(ROOT, staticRootRaw);
@@ -223,6 +233,8 @@ function build(env) {
 
     log: {
       level: logLevel,
+      format: logFormat,
+      includeStack,
       verbose: LOG_LEVELS[logLevel] <= LOG_LEVELS.debug,
     },
 

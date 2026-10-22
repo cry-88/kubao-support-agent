@@ -85,6 +85,14 @@ async function query(opts) {
   const actor = String(options.actor || 'unknown');
   const limited = limiter.hit(actor);
   if (!limited.ok) {
+    log.warn('触发分析查询限流', {
+      event: 'rate_limit',
+      scope: 'analytics',
+      actor,
+      limit_per_minute: limiter.config.max,
+      retry_after_s: limited.retry_after,
+      result: 'limited',
+    });
     return {
       ok: false,
       error: '分析查询太频繁，请 ' + limited.retry_after + ' 秒后再试',
@@ -154,15 +162,18 @@ async function query(opts) {
   });
 }
 
-/** 轻量审计日志；阶段4 会替换为结构化日志（traceId / JSON 行） */
+/** 结构化审计日志：谁、问了什么、用了多久、命中哪个指标 */
 function logQuery(actor, text, status, elapsed, result) {
-  const oneLine = String(text == null ? '' : text).replace(/\s+/g, ' ').slice(0, 80);
-  const line =
-    status + ' actor=' + actor + ' elapsed=' + elapsed + 'ms' +
-    (result && result.metric ? ' metric=' + result.metric : '') +
-    ' q="' + oneLine + '"';
-  if (status === 'ok') log.info(line);
-  else log.warn(line);
+  const fields = {
+    event: 'analytics.query',
+    actor: actor,
+    status: status,
+    duration_ms: elapsed,
+    metric: (result && result.metric) || null,
+    q: String(text == null ? '' : text).replace(/\s+/g, ' ').slice(0, 80),
+  };
+  if (status === 'ok') log.info('分析查询完成', fields);
+  else log.warn('分析查询未完成', fields);
 }
 
 /** 导出 CSV 文本（BOM + CRLF，Excel 直接可开）；只走规则解析，不触发模型 */

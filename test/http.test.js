@@ -20,6 +20,7 @@ const ADMIN = 'test-admin-code';
 const DATA_DIR = path.join(os.tmpdir(), 'kubao-test-' + Date.now());
 
 let child = null;
+let LOG_BUF = '';
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -65,9 +66,19 @@ test.before(async () => {
       CS_ADMIN_CODE: ADMIN,
       CS_ANALYTICS_RATE: '6',
       CS_CORS_ORIGINS: 'http://allowed.test',
-      CS_LOG_LEVEL: 'error',
+      CS_LOG_LEVEL: 'info',
+      CS_LOG_FORMAT: 'json',
+      CS_BODY_LIMIT_BYTES: '4096',
     }),
     stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (d) => {
+    LOG_BUF += d;
+  });
+  child.stderr.on('data', (d) => {
+    LOG_BUF += d;
   });
   for (let i = 0; i < 60; i += 1) {
     try {
@@ -291,6 +302,122 @@ test('安全：服务端源码 / 数据 / 环境配置目录不可通过静态�
     const r = await fetch(BASE + p);
     assert.strictEqual(r.status, 404, p + ' 应被拦截');
   }
+});
+
+/* ------------------------- 阶段4：健康检查 / 链路 / 日志 ------------------------- */
+
+async function waitForLog(needle, ms) {
+  const deadline = Date.now() + (ms || 2000);
+  while (Date.now() < deadline) {
+    if (LOG_BUF.indexOf(needle) >= 0) return true;
+    await sleep(50);
+  }
+  return false;
+}
+
+test('健康检查：返回 200、状态 ok，且不泄露路径与口令', async () => {
+  const r = await fetch(BASE + '/health');
+  assert.strictEqual(r.status, 200);
+  const j = await r.json();
+  assert.strictEqual(j.status, 'ok');
+  assert.strictEqual(j.env, 'test');
+  assert.strictEqual(j.checks.data_dir.writable, true);
+  assert.strictEqual(j.checks.store.ok, true);
+  assert.ok(j.counts.conversations >= 1);
+  assert.ok(typeof j.uptime_s === 'number');
+  const raw = JSON.stringify(j);
+  assert.ok(!raw.includes(ADMIN), '不得回显管理员口令');
+  assert.ok(!raw.includes(DATA_DIR), '不得暴露绝对路径');
+});
+
+test('链路追踪：响应头带 X-Trace-Id，并复用调用方传入的 X-Request-Id', async () => {
+  const auto = await fetch(BASE + '/api/models');
+  const autoTrace = auto.headers.get('x-trace-id');
+  assert.match(autoTrace || '', /^[a-z0-9]{8,32}$/);
+
+  const given = 'trace-from-nginx-0001';
+  const echoed = await fetch(BASE + '/api/models', { headers: { 'X-Request-Id': given } });
+  assert.strictEqual(echoed.headers.get('x-trace-id'), given);
+  assert.ok(await waitForLog(given), '日志里应带上调用方传入的 trace_id');
+});
+
+test('非法 JSON：400 + 可读提示，不返回堆栈', async () => {
+  const r = await fetch(BASE + '/api/rpc', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{not-json',
+  });
+  assert.strictEqual(r.status, 400);
+  const text = await r.text();
+  assert.match(text, /请求格式错误/);
+  assert.doesNotMatch(text, /at Object|at Module|SyntaxError|\.js:\d+/);
+});
+
+test('请求体超限：413 + 可读提示', async () => {
+  const r = await fetch(BASE + '/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'x'.repeat(8000) }] }),
+  });
+  assert.strictEqual(r.status, 413);
+  const j = await r.json();
+  assert.match(j.error.message, /超过上限/);
+});
+
+test('访问日志：含 event/http.request/status/duration_ms/trace_id', async () => {
+  await fetch(BASE + '/api/runtime-config');
+  assert.ok(await waitForLog('"event":"http.request"'));
+  const lines = LOG_BUF.split('\n').filter((l) => l.indexOf('"event":"http.request"') >= 0);
+  assert.ok(lines.length > 0);
+  const obj = JSON.parse(lines[lines.length - 1]);
+  assert.strictEqual(obj.level, 'info');
+  assert.ok(obj.path);
+  assert.ok(typeof obj.status === 'number');
+  assert.ok(typeof obj.duration_ms === 'number');
+  assert.ok(obj.trace_id);
+});
+
+test('RPC 调用日志：记录接口名、结果与耗时', async () => {
+  await rpc('cs_guest_list', { p_guest_key: 'testguest0000000000000009' });
+  assert.ok(await waitForLog('"event":"rpc.call"'));
+  const lines = LOG_BUF.split('\n').filter((l) => l.indexOf('"event":"rpc.call"') >= 0);
+  const obj = JSON.parse(lines[lines.length - 1]);
+  assert.strictEqual(obj.fn, 'cs_guest_list');
+  assert.strictEqual(obj.result, 'ok');
+  assert.ok(typeof obj.duration_ms === 'number');
+  assert.ok(obj.trace_id, 'RPC 日志应继承请求 trace');
+});
+
+test('登录失败：写 warn 级 auth.login 日志且口令被打码', async () => {
+  await rpc('cs_console_login', { p_code: 'definitely-wrong-code' });
+  assert.ok(await waitForLog('"event":"auth.login"'));
+  const lines = LOG_BUF.split('\n').filter((l) => l.indexOf('"event":"auth.login"') >= 0);
+  const obj = JSON.parse(lines[lines.length - 1]);
+  assert.strictEqual(obj.level, 'warn');
+  assert.strictEqual(obj.result, 'fail');
+  assert.strictEqual(obj.reason, 'bad_code');
+  assert.doesNotMatch(lines[lines.length - 1], /definitely-wrong-code/);
+});
+
+test('工单锁冲突：写 warn 级 ticket.claim result=conflict', async () => {
+  const start = await rpc('cs_guest_start', { p_guest_key: 'lockguest00000000000000001', p_user_label: '锁测试' });
+  await rpc('cs_guest_update', {
+    p_guest_key: 'lockguest00000000000000001',
+    p_conversation_id: start.conversation_id,
+    p_status: 'handoff',
+  });
+  const first = await rpc('cs_agent_claim', { p_code: 'kubao-agent-1', p_conversation_id: start.conversation_id });
+  assert.strictEqual(first.ok, true);
+  const second = await rpc('cs_agent_claim', { p_code: 'kubao-agent-2', p_conversation_id: start.conversation_id });
+  assert.strictEqual(second.ok, false);
+  assert.strictEqual(second.error, 'claimed_by_other');
+
+  assert.ok(await waitForLog('"result":"conflict"'));
+  const lines = LOG_BUF.split('\n').filter((l) => l.indexOf('"event":"ticket.claim"') >= 0);
+  const obj = JSON.parse(lines[lines.length - 1]);
+  assert.strictEqual(obj.level, 'warn');
+  assert.strictEqual(obj.result, 'conflict');
+  assert.strictEqual(obj.conversation_id, start.conversation_id);
 });
 
 test('分析限流：超过阈值返回可读提示（阈值由 CS_ANALYTICS_RATE 控制）', async () => {
