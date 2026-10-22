@@ -48,6 +48,7 @@
     lowConf: 0,
     lastSendAt: 0,
     sendTimes: [],
+    preview: false,
     label: '访客 ' + guestKey.slice(0, 4).toUpperCase(),
   };
 
@@ -697,7 +698,7 @@
 
   async function send(text) {
     var content = String(text || '').trim();
-    if (!content || state.streaming) return;
+    if (!content || state.streaming || state.preview) return;
     if (!state.model) { toast('模型暂不可用，请稍后刷新页面'); return; }
     var blocked = checkRate();
     if (blocked) { toast(blocked); return; }
@@ -994,9 +995,51 @@
     el.endBtn.addEventListener('click', endConversation);
   }
 
+  /* ---------- 静态预览模式（GitHub Pages）----------
+   * 云服务按来源域名精确校验，*.github.io 不在白名单，
+   * 数据库与大模型调用必然失败。这里直接降级为纯静态展示，
+   * 不发起任何云端请求，避免满屏报错。 */
+  function isStaticPreview() {
+    return /\.github\.io$/i.test(location.hostname);
+  }
+
+  function enterPreviewMode() {
+    state.preview = true;
+    el.modelHint.textContent = '静态预览模式 · 不连接云端';
+    el.input.disabled = true;
+    el.input.placeholder = '当前为静态预览版，对话功能需在云托管域名使用';
+    el.sendBtn.disabled = true;
+    el.bannerWrap.innerHTML =
+      '<div class="handoff-banner show" style="max-width:780px;margin:0 auto 8px;">' +
+      '<span class="dot" style="color:#b45309"></span>' +
+      '<span><b>静态预览模式</b>：本页面只展示界面，数据读写与大模型调用需在云托管域名下运行。</span></div>';
+    el.messages.innerHTML =
+      '<div class="empty-state">' +
+      '<div class="big-avatar">哭</div>' +
+      '<h2>你好，我是哭包</h2>' +
+      '<p>当前是 GitHub Pages 静态预览版，<b>不连接云端</b>，所以对话、历史记录与后台都不可用。<br/>' +
+      '完整功能请访问云托管域名。</p>' +
+      '<div class="suggest">' +
+      '<button data-noop="1">查订单物流</button>' +
+      '<button data-noop="1">怎么申请退款</button>' +
+      '<button data-noop="1">App 闪退怎么办</button>' +
+      '</div></div>';
+    Array.prototype.forEach.call(el.messages.querySelectorAll('[data-noop]'), function (btn) {
+      btn.addEventListener('click', function () {
+        toast('静态预览模式：请在云托管域名下体验完整功能');
+      });
+    });
+  }
+
   async function boot() {
     el.guestLabel.textContent = state.label;
     bind();
+
+    if (isStaticPreview()) {
+      enterPreviewMode();
+      return;
+    }
+
     renderEmpty();
 
     try {

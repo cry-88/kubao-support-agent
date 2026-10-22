@@ -155,18 +155,30 @@ DELETE FROM cs_faqs;
 DELETE FROM cs_orders;
 ```
 
-### 第 2 步：准备云服务配置
+### 第 2 步：配置后端域名（endpoint）
 
-拿到应用的四个公开配置项（`endpoint` / `publishableKey` / `oauthRelayBaseUrl` / `resourceId`），填入 `assets/config.js`：
+`assets/config.js` 里的 `endpoint` 既是**数据面地址**，也是云服务的**来源校验基准**：
 
 ```js
 window.CLOUD_PUBLIC_CONFIG = {
-  resourceId: '你的资源 ID',
-  endpoint: 'https://你的应用域名',
-  oauthRelayBaseUrl: 'https://...',
-  publishableKey: '你的 publishableKey',
+  resourceId: 'wbcs_xxx',
+  endpoint: 'https://你的应用域名',   // ← 必须是本应用发布出来的域名
+  oauthRelayBaseUrl: 'https://www.workbuddy.cn/v2/as/genie-baas/oauth',
+  publishableKey: 'wbpk_xxx',
 };
 ```
+
+**正确取值的顺序不能反：**
+
+1. 在平台开通云服务，拿到 `publicConfig` 的四个字段（`endpoint` / `publishableKey` / `oauthRelayBaseUrl` / `resourceId`）
+2. 把项目发布到云托管，得到形如 `https://xxx.app.workbuddy.host` 的域名
+3. 把第 1 步的 `endpoint` 回填进 `config.js`，它必须与第 2 步的域名**完全一致**（含 `https://`，不带路径与查询串）
+
+**三个常见坑：**
+
+- 填成 `https://cry-88.github.io/...` → 必然 403，Pages 域名不在白名单
+- 填成别的应用的域名 → 数据读写会串到别人的环境
+- 换了发布域名但没同步 `config.js` → 页面能打开，但所有请求被拒
 
 `publishableKey` 只标识应用、本身不带权限（服务端按来源域名精确校验），可以安全地放在前端；**任何情况下都不要把长期密钥写进仓库或 `.env.example`**。
 
@@ -203,8 +215,8 @@ INSERT INTO cs_agents (name, code) VALUES ('你的客服', '你的工号口令')
 3. 站点地址：`https://cry-88.github.io/kubao-support-agent/`
 
 > [!WARNING]
-> **Pages 版本页面能打开，但业务不可用。** 云服务按来源域名精确校验，`*.github.io` 与已登记的应用域名不同，数据读写与大模型调用都会被拒绝。
-> 想让 Pages 版本完整可用，需把 `assets/config.js` 指向允许该域名的云服务环境；否则请以云托管域名为准。
+> **Pages 版本只做静态预览，不跑任何业务。** 云服务按来源域名精确校验，`*.github.io` 与已登记的应用域名不同，数据读写与大模型调用都会被拒绝。
+> 代码已内置**静态预览模式**：检测到 `*.github.io` 时不发起任何云端请求，禁用输入框与登录按钮，页面顶部提示「静态预览模式」。想看真实对话、后台与统计，必须访问云托管域名。
 
 ---
 

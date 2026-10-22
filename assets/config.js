@@ -1,4 +1,12 @@
-/* 云服务公开配置：仅包含可安全下发到前端的公开字段 */
+/* 云服务公开配置：仅包含可安全下发到前端的公开字段
+ *
+ * endpoint 必须是「本应用发布域名」的数据面地址，形如 https://xxx.app.workbuddy.host，
+ * 取值来自云服务激活时返回的 publicConfig.endpoint，不能随手改、也不能填 GitHub Pages 域名。
+ *
+ * 云服务按「来源域名」做精确校验：只有在 endpoint 对应域名下打开的页面，
+ * 数据库读写与大模型调用才会放行；在 *.github.io 等其它域名下打开会被拒绝。
+ * 所以 GitHub Pages 版本只做静态预览，见 assets/app.js 的静态预览模式。
+ */
 window.CLOUD_PUBLIC_CONFIG = {
   resourceId: 'wbcs_Ugs3mkO0xIlyh6sGmcpLbd',
   endpoint: 'https://smart-support-62853.app.workbuddy.host',

@@ -766,6 +766,17 @@
   /* ---------- 启动 ---------- */
   async function boot() {
     bind();
+
+    // GitHub Pages 只做静态预览：云服务按来源域名校验，这里直接禁用登录
+    if (/\.github\.io$/i.test(location.hostname)) {
+      $('gateErr').textContent = '当前为 GitHub Pages 静态预览版，工作台需在云托管域名下使用。';
+      $('codeInput').disabled = true;
+      $('codeInput').placeholder = '静态预览模式不可登录';
+      $('gateBtn').disabled = true;
+      $('gateBtn').textContent = '不可用';
+      return;
+    }
+
     try {
       state.cloud = window.createCsCloud();
     } catch (e) {
