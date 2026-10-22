@@ -92,8 +92,8 @@ flowchart TB
 
 ## 技术栈
 
-- **前端**：原生 HTML + CSS + JavaScript（无框架、无打包、无 npm 依赖）
-- **云 SDK**：`@tencent-ai/workbuddy-cloud-sdk`（CDN IIFE 形式，全局 `WorkBuddyCloud`）
+- **前端**：原生 HTML + CSS + JavaScript（单应用结构，无 monorepo、无框架、无打包）
+- **云 SDK**：`@tencent-ai/workbuddy-cloud-sdk`。运行时通过 CDN 加载全局 `WorkBuddyCloud`，`package.json` 仅用于记录依赖版本，**`npm install` 不是必需的**
 - **数据库**：托管 PostgreSQL + Row Level Security
 - **模型**：平台免密钥大模型通道，仅支持流式（`stream: true`）
 
@@ -105,6 +105,7 @@ flowchart TB
 smart-support-agent/
 ├── index.html            # 用户端聊天页
 ├── admin.html            # 坐席 / 管理后台（按口令区分角色）
+├── package.json          # 依赖记录（无构建脚本，node_modules 不入库）
 ├── assets/
 │   ├── config.js         # 云服务公开配置 + 客户端初始化 + RPC 解包
 │   ├── kb.js             # 意图规则、FAQ 检索、提示词构造
