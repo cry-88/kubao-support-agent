@@ -11,7 +11,7 @@
 #   dist/kubao-support-<version>-<sha>-<date>.tar.gz.sha256
 #
 # 设计：
-#   - 默认用 git archive，只打已提交内容，保证"线上跑的就是仓库里的"
+#   - 默认用 git ls-files，只打已提交内容，保证"线上跑的就是仓库里的"
 #   - 排除 data/、.git、node_modules、dist、测试与文档，减小体积
 #   - 打包后自检：必须包含 server.js / server/ / assets/ / index.html；不得包含 data/
 # =============================================================================

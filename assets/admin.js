@@ -767,9 +767,12 @@
   async function boot() {
     bind();
 
-    // GitHub Pages 只做静态预览：云服务按来源域名校验，这里直接禁用登录
-    if (/\.github\.io$/i.test(location.hostname)) {
-      $('gateErr').textContent = '当前为 GitHub Pages 静态预览版，工作台需在云托管域名下使用。';
+    // 静态预览：模式来自 assets/runtime.js 的显式声明，兼容历史的 *.github.io 判断
+    var staticMode = typeof window.isStaticMode === 'function'
+      ? window.isStaticMode()
+      : /\.github\.io$/i.test(location.hostname);
+    if (staticMode) {
+      $('gateErr').textContent = '当前为 GitHub Pages 静态预览版，工作台需在服务器部署版本中使用。';
       $('codeInput').disabled = true;
       $('codeInput').placeholder = '静态预览模式不可登录';
       $('gateBtn').disabled = true;

@@ -9,7 +9,7 @@
 
 | 文件 | 作用 |
 | --- | --- |
-| `scripts/package.sh` | 构建发布包（`git archive` 只打已提交内容），带包内容自检与 sha256 |
+| `scripts/package.sh` | 构建发布包（`git ls-files` 只打已提交内容），带包内容自检与 sha256 |
 | `deploy/install.sh` | 幂等安装/更新：建用户、解包、原子切软链、装 unit、健康检查 |
 | `deploy/rollback.sh` | 版本回滚：切软链 + 重启 + 健康检查，不动数据 |
 | `deploy/backup.sh` | 备份 data/ 与环境变量文件（含口令），权限 600，保留 14 天 |
