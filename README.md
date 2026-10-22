@@ -3,15 +3,12 @@
 [![Deploy to GitHub Pages](https://github.com/cry-88/kubao-support-agent/actions/workflows/deploy-pages.yml/badge.svg)](https://github.com/cry-88/kubao-support-agent/actions/workflows/deploy-pages.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-一个可以直接上线的**在线智能客服 Web 应用**：多轮对话、FAQ 知识库检索、意图识别、自动转人工、坐席工单队列、长会话摘要、管理后台与满意度统计。
+一个可以直接上线的**在线智能客服 Web 应用**：多轮对话、FAQ 知识库检索、意图识别、自动转人工、坐席工单队列、长会话摘要、管理后台、满意度统计与工单数据分析。
 
-单应用结构，没有 monorepo、没有 `packages/` 子包、没有打包构建；数据持久化与大模型调用全部走云端，前端是纯静态页面。
+单应用结构，没有 monorepo、没有 `packages/` 子包、没有打包构建；后端零依赖 Node ≥ 18，前端是纯静态页面。两种部署模式：**服务器部署**（功能完整）与 **GitHub Pages 静态预览**（只看界面）。
 
 > [!IMPORTANT]
-> **部署后第一件事：修改管理员口令。**
-> [`schema.sql`](schema.sql) 里的管理员口令是占位符 `CHANGE-ME-BEFORE-DEPLOY`，坐席口令是 `CHANGE-ME-1` / `CHANGE-ME-2`。
-> 建库完成后必须立刻在数据库中改成你自己的强口令 —— 否则任何人都能凭占位符进入工作台。
-> 修改方式见 [配置说明](#配置说明)。
+> **部署后第一件事：修改管理员口令。** 默认口令仅用于开发演示，生产环境必须设置环境变量 `CS_ADMIN_CODE` 为强口令，生产模式校验不通过会拒绝启动。
 
 ---
 
@@ -25,7 +22,7 @@ node server.js          # 或 npm start（默认 development）
 # 打开 http://localhost:8080/admin.html   坐席 / 管理后台
 
 NODE_ENV=production node server.js   # 切环境，详见「环境与配置」
-npm test                             # 74 条自测用例
+npm test                             # 134 条自测用例
 ```
 
 默认口令（首次启动写入 `data/store.json`，请立即修改）：
@@ -47,7 +44,7 @@ npm test                             # 74 条自测用例
 | 云端大模型（免密钥流式通道） | `server/reply.js` 确定性应答引擎：解析前端已检索好的 FAQ 与订单事实后作答，不编造数字，同样支持 SSE 流式与「停止生成」 |
 | `schema.sql` 一次建库 | `server/store.js` 首次启动按同样种子数据（12 条 FAQ / 3 个演示订单）初始化 |
 
-> 需要真实大模型改写措辞、或需要跨设备共享数据时，再按下面的云服务部署步骤接回 PostgreSQL 与模型通道即可；`schema.sql` 与前端业务逻辑都还保留着。
+> 需要真实大模型改写措辞、或需要跨设备共享数据时，可接回 PostgreSQL（`schema.sql` 已就绪）与模型通道（设置 `CS_MODEL_*` 环境变量）；前端业务逻辑无需改动。
 
 ---
 
@@ -66,7 +63,10 @@ npm test                             # 74 条自测用例
 - [服务端接口（RPC）](#服务端接口rpc)
 - [安全模型](#安全模型)
 - [配置说明](#配置说明)
+- [分支策略](#分支策略)
 - [已知限制与路线图](#已知限制与路线图)
+
+> 更多文档：[项目总览](docs/OVERVIEW.md) · [开发手册](docs/DEVELOP.md) · [交付清单](docs/DELIVER.md) · [各阶段文档](docs/OVERVIEW.md#6-阶段文档索引)
 
 ---
 
@@ -122,19 +122,24 @@ flowchart TB
         A["工作台 admin.html<br/>工单队列 / 统计 / 知识库"]
     end
 
-    subgraph 云["云服务（托管）"]
-        DB[("PostgreSQL<br/>RLS 全表关闭直连")]
-        FN["SECURITY DEFINER<br/>RPC 函数层"]
-        LLM["大模型通道<br/>免密钥 / 流式 SSE"]
+    subgraph 后端["Node 后端（零依赖）"]
+        API["server.js 路由<br/>/api/rpc · /api/chat · /api/faqs · /api/models · /health"]
+        RPC["rpc.js<br/>27+ handlers (cs_*)<br/>防爆破 · 工单锁"]
+        REPLY["reply.js<br/>本地应答引擎 (SSE)<br/>task 分流"]
+        AN["analytics/<br/>DSL 白名单 + 只读执行"]
+        STORE[("store.js<br/>data/store.json<br/>按 schema.sql 建模")]
     end
 
-    U -- "rpc(cs_guest_*)<br/>校验 guest_key" --> FN
-    A -- "rpc(cs_agent_* / cs_admin_*)<br/>校验口令" --> FN
-    FN --> DB
-    U -. "chat.completions<br/>stream:true" .-> LLM
+    U -- "POST /api/chat (SSE)<br/>GET /api/faqs" --> API
+    A -- "POST /api/rpc<br/>cs_admin_* / cs_agent_*" --> API
+    API --> RPC
+    API --> REPLY
+    REPLY --> AN
+    RPC --> STORE
+    REPLY --> STORE
 ```
 
-**关键设计**：前端不直连数据表。除 FAQ 为公开只读外，所有业务表都开启 RLS 且**不建任何策略**，匿名身份查询恒为 0 行；一切读写都经过服务端函数，函数内部校验访客密钥或坐席口令后才落库。
+**关键设计**：前端不直连数据表。所有读写都经过 `server/rpc.js` 的 handler 层，handler 内部校验访客密钥或坐席口令后才落 `data/store.json`。`schema.sql`（PostgreSQL 建库脚本）保留着，需要迁移到数据库时可直接用。
 
 ---
 
@@ -143,12 +148,11 @@ flowchart TB
 | 层 | 选型 | 说明 |
 |---|---|---|
 | 前端 | 原生 HTML + CSS + JavaScript | 无框架、无打包、无运行时依赖，改完刷新即生效 |
-| 云 SDK | `@tencent-ai/workbuddy-cloud-sdk` | 运行时从 CDN 加载全局 `WorkBuddyCloud`；`package.json` 仅记录依赖版本，`npm install` 非必需 |
-| 数据 | PostgreSQL + RLS | 行级安全 + `SECURITY DEFINER` 函数作为唯一入口 |
-| 模型 | 平台免密钥通道 | 仅支持流式（`stream: true`），前端不持有任何密钥 |
-| 静态服务 | `server.js`（Node，零依赖） | 本地预览与平台部署共用，监听 `$PORT` |
-| CI/CD | GitHub Actions | 语法检查 + 密钥扫描 + Pages 发布 |
-| 宿主 | 静态托管 / Node 服务 | 单端口 HTTP，任意静态托管均可 |
+| 后端 | Node ≥ 18（零依赖） | `server.js` 单入口，无需 `npm install` |
+| 数据 | `data/store.json` | 按 `schema.sql` 7 张表建模，原子整文件替换 |
+| 模型 | `server/reply.js` 本地应答引擎 | 确定性模板作答，SSE 流式，不编造数字；可选接真实模型 |
+| CI/CD | GitHub Actions | 语法检查 + 测试 + 密钥扫描 + 构建静态站点 + Pages 发布 |
+| 部署 | systemd + Nginx | 单机方案，Node 监听 127.0.0.1，Nginx 透传 TLS 与真实 IP |
 
 ---
 
@@ -159,86 +163,82 @@ kubao-support-agent/
 ├── index.html            # 用户端聊天页
 ├── admin.html            # 坐席 / 管理后台（按口令区分角色）
 ├── 404.html              # 404 兜底：3 秒回首页，兼容子路径部署
-├── server.js             # 零依赖静态服务器：本地预览 / 部署启动入口
-├── package.json          # 依赖记录 + start 脚本（单应用，无 packages 子包）
-├── .env.example          # 环境变量占位模板（不含真实密钥）
+├── server.js             # HTTP 服务入口：路由/CORS/traceId/SIGTERM 优雅退出
+├── package.json          # 版本 + scripts（零依赖）
+├── .env.example          # 通用环境变量模板（入库）
 ├── .gitignore
 ├── LICENSE               # MIT
-├── schema.sql            # 一次性初始化脚本：建表 + RLS + 28 个 RPC 函数 + 种子数据
+├── schema.sql            # PostgreSQL 建库脚本（保留供迁移用）
 ├── assets/
-│   ├── runtime.js        # 运行模式声明：'server'（服务器版）/ 'static'（Pages 静态版）
-│   ├── config.js         # 云服务公开配置 + 客户端初始化 + RPC 解包
+│   ├── runtime.js        # 运行模式声明：'server' / 'static'
+│   ├── config.js         # 客户端初始化 + RPC 封装 + 模式判定
 │   ├── kb.js             # 意图规则、FAQ 检索、提示词构造
 │   ├── app.js            # 聊天页逻辑：对话、流式、摘要、转人工、评分
 │   ├── admin.js          # 后台逻辑：队列、认领、统计、知识库、导出
-│   ├── dashboard.js      # 管理看板：原生 SVG 折线图 / 环形图
+│   ├── dashboard.js      # 看板图表：原生 SVG 折线/环形图
 │   ├── styles.css        # 通用样式
 │   └── admin.css         # 后台图表与队列样式
-├── server.js             # 零依赖 HTTP 服务：路由 + 静态资源 + CORS + 优雅退出
-├── server/               # 后端：config / logger / store / rpc / reply / analytics / health
+├── server/               # 后端模块
+│   ├── config.js           三环境配置 + 生产强校验
+│   ├── logger.js           结构化日志 + traceId + 脱敏
+│   ├── store.js            JSON 文件存储（按 schema.sql 建模）
+│   ├── rpc.js              27+ handlers + 防爆破 + 工单锁
+│   ├── reply.js            本地应答引擎 + task 分流
+│   ├── client-ip.js        可信代理判定
+│   ├── health.js            /health 健康检查
+│   └── analytics/          数据分析 Agent
+│       ├── dsl.js           白名单 DSL（8 指标）
+│       ├── parse.js         规则解析
+│       ├── execute.js       只读执行器
+│       ├── rate.js          独立限流
+│       └── index.js
 ├── scripts/
-│   ├── package.sh        # 服务器版打包（git 清单 + sha256）
-│   └── build-pages.sh    # Pages 静态版构建，产出 dist-pages/
-├── deploy/               # Linux 部署：install / rollback / backup / nginx / systemd
-├── docs/screenshots/     # 界面截图（见「界面截图」）
+│   ├── package.sh          # 服务器部署包（git ls-files + sha256）
+│   └── build-pages.sh      # Pages 静态包（改写模式 + 自检）
+├── deploy/               # Linux 部署
+│   ├── install.sh / rollback.sh / backup.sh
+│   ├── systemd/ / nginx/ / env/
+├── env/                  # 三套环境模板（*.env.example）
+├── test/                 # 134 项自测（node --test）
+├── docs/                 # 文档 + 截图
+│   ├── OVERVIEW.md        # 项目总览
+│   ├── DEVELOP.md         # 开发维护手册
+│   ├── DELIVER.md          # 交付清单
+│   ├── stage1~7-*.md       # 各阶段交付文档
+│   └── screenshots/
 └── .github/workflows/
     └── deploy-pages.yml  # CI：语法检查 + 测试 + 密钥扫描 + 构建 + Pages 发布
 ```
-
-> `dist-pages/` 只在本地构建验证时生成，已在 `.gitignore` 中忽略；CI 里是临时产物，不会进仓库。
 
 ---
 
 ## 部署步骤
 
-### 第 1 步：初始化数据库
+### 第 1 步：本地预览
 
-在云数据库 SQL 控制台执行 [`schema.sql`](schema.sql)。它会创建 7 张表、开启 RLS、创建 28 个 RPC 函数，并写入 FAQ 与演示订单种子数据。
-
-> [!WARNING]
-> **`schema.sql` 是一次性初始化脚本，请当作「空库安装包」使用。**
->
-> - **不做拆分**：表、RLS、函数、种子数据都在这一个文件里，按顺序执行才不会出现「函数引用了还不存在的表」
-> - **面向空库**：脚本假设 `public` schema 中没有同名 `cs_` 对象
-> - **重复执行有副作用**：表与函数因 `CREATE ... IF NOT EXISTS` / `CREATE OR REPLACE` 不会报错，但 **FAQ 与演示订单会重复插入**（没有唯一约束），导致知识库出现重复条目、命中打分被稀释
-> - **口令不会被覆盖**：`admin_code` 使用 `ON CONFLICT DO NOTHING`，重跑不会把真实口令改回占位符
-> - **务必先备份**：在已有业务数据的库上执行前先做快照，不要直接在生产库试跑
-
-如需二次执行，先清理种子表：
-
-```sql
-DELETE FROM cs_faqs;
-DELETE FROM cs_orders;
+```bash
+git clone <repo> && cd kubao-support-agent
+node server.js            # 默认 development，打开 http://localhost:8080
 ```
 
-### 第 2 步：配置后端域名（endpoint）
+首次启动自动初始化 `data/store.json`（12 条 FAQ / 3 个演示订单 / 2 个坐席）。
 
-`assets/config.js` 里的 `endpoint` 既是**数据面地址**，也是云服务的**来源校验基准**：
+### 第 2 步：配置口令
 
-```js
-window.CLOUD_PUBLIC_CONFIG = {
-  resourceId: 'wbcs_xxx',
-  endpoint: 'https://你的应用域名',   // ← 必须是本应用发布出来的域名
-  oauthRelayBaseUrl: 'https://www.workbuddy.cn/v2/as/genie-baas/oauth',
-  publishableKey: 'wbpk_xxx',
-};
+开发模式下用默认口令即可。生产环境：
+
+```bash
+# env/production.env 或环境变量
+CS_ADMIN_CODE=你的强口令
+CS_AGENT_CODE_1=坐席1口令
+CS_AGENT_CODE_2=坐席2口令
+
+NODE_ENV=production node server.js    # 强校验：口令非默认值，CORS 禁 *
 ```
 
-**正确取值的顺序不能反：**
+> 生产模式校验不通过会拒绝启动，退出码 1。
 
-1. 在平台开通云服务，拿到 `publicConfig` 的四个字段（`endpoint` / `publishableKey` / `oauthRelayBaseUrl` / `resourceId`）
-2. 把项目部署到服务器（见「第 5 步 A」），得到你自己的访问域名
-3. 把第 1 步的 `endpoint` 回填进 `config.js`，它必须与第 2 步的域名**完全一致**（含 `https://`，不带路径与查询串）
-
-**三个常见坑：**
-
-- 填成 `https://cry-88.github.io/...` → 必然 403，Pages 域名不在白名单（静态版因此默认改为不发任何请求）
-- 填成别的应用的域名 → 数据读写会串到别人的环境
-- 换了发布域名但没同步 `config.js` → 页面能打开，但所有请求被拒
-
-`publishableKey` 只标识应用、本身不带权限（服务端按来源域名精确校验），可以安全地放在前端；**任何情况下都不要把长期密钥写进仓库或 `.env.example`**。
-
-### 第 3 步：本地预览
+### 第 3 步：本地验证
 
 ```bash
 npm start            # 等价于 node server.js
@@ -246,19 +246,9 @@ npm start            # 等价于 node server.js
 ```
 
 > [!NOTE]
-> 云服务按来源域名精确校验，`localhost` 无法完成数据与大模型调用。本地只用来看样式与结构，功能请在上线域名验证。
+> 本地预览即可完整体验全部功能（对话、工单、看板、导出），无需额外服务。
 
-### 第 4 步：修改口令
-
-建库后立刻改掉占位口令，否则工作台是敞开的：
-
-```sql
-UPDATE cs_settings SET value = '你的强口令' WHERE key = 'admin_code';
-
-INSERT INTO cs_agents (name, code) VALUES ('你的客服', '你的工号口令');
-```
-
-### 第 5 步：发布上线
+### 第 4 步：发布上线
 
 **A. 发布到 Linux 服务器（推荐，功能完整）**
 
@@ -425,7 +415,7 @@ sudo journalctl -u kubao-support -f   # 结构化日志
 
 目录规划、命令清单（含风险等级与回滚方式）、上线检查清单见 [`docs/stage6-deploy.md`](docs/stage6-deploy.md)。
 
-> **单实例约束**：数据存于单个 JSON 文件（整文件原子替换），多进程会互相覆盖。需要水平扩展请先迁移到 PostgreSQL（阶段 8 提供步骤）。
+> **单实例约束**：数据存于单个 JSON 文件（整文件原子替换），多进程会互相覆盖。需要水平扩展请迁移到 PostgreSQL（`schema.sql` 已就绪）。
 
 ---
 
@@ -464,14 +454,14 @@ sudo journalctl -u kubao-support -f   # 结构化日志
 
 ## 服务端接口（RPC）
 
-所有函数均为 `SECURITY DEFINER`，返回统一结构 `{ ok: boolean, ... }`。
+所有 RPC 经 `POST /api/rpc` 分发，body 为 `{ func: "cs_xxx", params: {...} }`，返回统一结构 `{ ok: boolean, ... }`。
 
 | 分组 | 函数 |
 |---|---|
 | 访客侧（校验 `guest_key`） | `cs_guest_start` / `list` / `messages` / `poll` / `append` / `update` / `rate` / `contact` / `summary_save` |
 | 工具 | `cs_lookup_order` |
 | 坐席侧（校验坐席口令） | `cs_console_login`、`cs_operator`、`cs_agent_queue` / `claim` / `release` / `messages` / `reply` / `resolve` |
-| 管理侧（校验管理员口令） | `cs_admin_stats` / `conversations` / `messages` / `reply` / `resolve` / `faq_list` / `faq_save` / `faq_delete` / `gaps` / `export` |
+| 管理侧（校验管理员口令） | `cs_admin_stats` / `conversations` / `messages` / `reply` / `resolve` / `faq_list` / `faq_save` / `faq_delete` / `gaps` / `export` / `csrf_token` / `dashboard` / `analytics` / `analytics_meta` |
 
 ---
 
@@ -479,12 +469,12 @@ sudo journalctl -u kubao-support -f   # 结构化日志
 
 | 层次 | 做法 |
 |---|---|
-| 前端 | 只持有 `endpoint` / `publishableKey` 等公开配置；不含任何长期密钥 |
-| 数据库 | 业务表 `ENABLE ROW LEVEL SECURITY` 且零策略 —— 匿名与登录用户直连均被拒绝 |
-| 函数层 | `SECURITY DEFINER` + 强制口令校验；访客数据按 `guest_key` 隔离 |
-| 登录 | 同口令 10 分钟 5 次失败锁定、全局 20 次锁定，失败延迟 0.2s，只存 `md5` 不存明文 |
-| 模型 | 平台免密钥通道，不暴露上游凭证；模型输出按纯文本渲染，不执行、不拼 SQL |
+| 前端 | 只持有公开配置；不含任何长期密钥 |
+| 后端 | `server/rpc.js` handler 层校验访客密钥或坐席口令；数据按 `guest_key` 隔离 |
+| 登录 | 同口令 10 分钟 5 次失败锁定、全局 20 次锁定，失败延迟 0.2s，只存 `md5` 不存明文；按 IP 计数防爆破 |
+| 模型 | 本地应答引擎不编造订单/金额/物流；模型输出按纯文本渲染，不执行、不拼 SQL |
 | 输入 | 系统提示与用户输入分离，用户消息进 `user` 角色，降低提示注入风险 |
+| 可信代理 | 默认不信 XFF；仅当对端在 `CS_TRUSTED_PROXIES` 内才读，且只取最后一段 |
 | CI | 每次推送扫描 `sk-` / `ghp_` / `AKIA` / 私钥头，命中即阻断部署 |
 
 ---
@@ -493,13 +483,30 @@ sudo journalctl -u kubao-support -f   # 结构化日志
 
 | 项 | 位置 | 修改方式 |
 |---|---|---|
-| 管理员口令 | `cs_settings.admin_code` | `UPDATE cs_settings SET value='新口令' WHERE key='admin_code';` |
-| 坐席账号 | `cs_agents` | `INSERT INTO cs_agents (name, code) VALUES ('姓名','工号口令');` |
+| 管理员口令 | `data/store.json` → `settings.admin_code` | 编辑 JSON；或删文件后设 `CS_ADMIN_CODE` 重启 |
+| 坐席账号 | `data/store.json` → `agents` | 编辑 JSON；或设 `CS_AGENT_CODE_1/2` 重启 |
 | 营业时间 | `assets/app.js` → `isBusinessHours()` | 默认 9:00–21:00（UTC+8） |
 | 摘要阈值 | `assets/app.js` → `SUMMARY_AFTER` / `SUMMARY_STEP` | 默认 12 条触发、每 6 条重算 |
-| 限流阈值 | 前端 `RATE` + 服务端 `cs_guest_append` | 前端 10/分钟，服务端 12/分钟 |
-| 云服务配置 | `assets/config.js` | 换环境时替换四个公开字段 |
+| 限流阈值 | 前端 `RATE` + 服务端 | 前端 10/分钟，服务端 12/分钟 |
 | 运行模式 | `assets/runtime.js` | `server`（默认）/ `static`（Pages 构建时自动改写） |
+
+---
+
+## 分支策略
+
+| 分支 | 用途 | 规则 |
+|---|---|---|
+| `main` | 稳定发布分支 | 对应线上 Pages；只从 `dev` 合并，不直接提交 |
+| `dev` | 开发集成分支 | 所有 `feature/*` 阶段先合并到此验收 |
+| `feature/stageN-*` | 单阶段开发 | 一个阶段一个分支，验收通过后合入 `dev` |
+
+提交规范（中文）：
+
+- `feat(scope): 说明` — 新功能
+- `fix(scope): 说明` — 修复
+- `merge: 说明` — 阶段合并
+- `docs(scope): 说明` — 文档
+- `chore: 说明` — 杂项
 
 ---
 
