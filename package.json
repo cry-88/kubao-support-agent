@@ -11,13 +11,13 @@
     "faq",
     "rag"
   ],
-  "homepage": "https://github.com/cry-88/-Agent-#readme",
+  "homepage": "https://github.com/cry-88/kubao-support-agent#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cry-88/-Agent-.git"
+    "url": "git+https://github.com/cry-88/kubao-support-agent.git"
   },
   "bugs": {
-    "url": "https://github.com/cry-88/-Agent-/issues"
+    "url": "https://github.com/cry-88/kubao-support-agent/issues"
   },
   "author": "cry-88",
   "license": "MIT",

@@ -1,6 +1,6 @@
 # 哭包 · 智能客服 Agent
 
-[![Deploy to GitHub Pages](https://github.com/cry-88/-Agent-/actions/workflows/deploy-pages.yml/badge.svg)](https://github.com/cry-88/-Agent-/actions/workflows/deploy-pages.yml)
+[![Deploy to GitHub Pages](https://github.com/cry-88/kubao-support-agent/actions/workflows/deploy-pages.yml/badge.svg)](https://github.com/cry-88/kubao-support-agent/actions/workflows/deploy-pages.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 一个可以直接上线的**在线智能客服 Web 应用**：多轮对话、FAQ 知识库检索、意图识别、自动转人工、坐席工单队列、长会话摘要、管理后台与满意度统计。
