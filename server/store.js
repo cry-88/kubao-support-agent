@@ -11,8 +11,10 @@ const path = require('path');
 const crypto = require('crypto');
 
 const config = require('./config');
+const logger = require('./logger');
 
 const APP_CONFIG = config.get();
+const log = logger.create(APP_CONFIG.log.level, 'store');
 const DATA_DIR = APP_CONFIG.data.dir;
 const DATA_FILE = path.join(DATA_DIR, 'store.json');
 
@@ -105,14 +107,37 @@ function build() {
 
 let db = null;
 
+/** 运行状态：供 /health 判断数据面是否正常 */
+const state = {
+  loaded: false,
+  seeded: false,
+  loadError: null,
+  saveError: null,
+  lastSaveAt: null,
+};
+
 function load() {
   try {
     const raw = fs.readFileSync(DATA_FILE, 'utf8');
     db = JSON.parse(raw);
     if (!db.seq) db.seq = { conversations: 0, messages: 0 };
+    state.loaded = true;
+    state.loadError = null;
+    state.seeded = false;
+    log.debug('数据已加载', { event: 'store.load', conversations: db.conversations.length, messages: db.messages.length });
     return db;
   } catch (e) {
+    const firstRun = e && e.code === 'ENOENT';
     db = build();
+    state.loaded = true;
+    state.seeded = true;
+    state.loadError = firstRun ? null : (e && e.message) || 'unknown';
+    if (!firstRun) {
+      // 文件存在但读不出来（损坏/权限），是真正的异常，必须让人看见
+      log.error('数据文件读取失败，已回退为种子数据', { event: 'store.load_failed', err: e, file: path.basename(DATA_FILE) });
+    } else {
+      log.info('首次启动，已写入种子数据', { event: 'store.seed', file: path.basename(DATA_FILE) });
+    }
     save();
     return db;
   }
@@ -124,9 +149,22 @@ function save() {
     const tmp = DATA_FILE + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(db, null, 1), 'utf8');
     fs.renameSync(tmp, DATA_FILE);
+    state.saveError = null;
+    state.lastSaveAt = new Date().toISOString();
   } catch (e) {
-    console.error('[store] 保存失败：', e.message);
+    state.saveError = (e && e.message) || 'unknown';
+    log.error('数据写入失败', { event: 'store.save_failed', err: e, file: path.basename(DATA_FILE) });
   }
+}
+
+function health() {
+  return {
+    loaded: state.loaded,
+    seeded: state.seeded,
+    loadError: state.loadError,
+    saveError: state.saveError,
+    lastSaveAt: state.lastSaveAt,
+  };
 }
 
 function nextId(table) {
@@ -144,6 +182,7 @@ module.exports = {
   },
   load,
   save,
+  health,
   nextId,
   md5,
   iso,

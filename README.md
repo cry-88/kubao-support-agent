@@ -59,6 +59,7 @@ npm test                             # 74 条自测用例
 - [目录结构](#目录结构)
 - [部署步骤](#部署步骤)
 - [环境与配置（三套环境）](#环境与配置三套环境)
+- [日志、链路与健康检查](#日志链路与健康检查)
 - [界面截图](#界面截图)
 - [数据模型](#数据模型)
 - [服务端接口（RPC）](#服务端接口rpc)
@@ -308,6 +309,46 @@ NODE_ENV=production node server.js       # 生产：强校验 + info 日志 + �
 
 ---
 
+## 日志、链路与健康检查
+
+日志按环境切换格式：开发 `text`（可读，含堆栈），生产 `json`（一行一事件，交给 journald / 采集器，不带堆栈）。等级 `debug / info / warn / error` 由 `CS_LOG_LEVEL` 控制，生产默认 `info`，即已关闭 debug。
+
+**链路追踪**：每个请求生成 `traceId`（或复用调用方传入的 `X-Request-Id`），通过 `AsyncLocalStorage` 贯穿整条异步链路，响应头回写 `X-Trace-Id`。
+
+```bash
+curl -H 'X-Request-Id: manual-trace-042' http://localhost:8080/api/models -D -
+# X-Trace-Id: manual-trace-042
+
+# 按 trace 还原一次请求
+grep 'manual-trace-042' server.log | jq -c '{ts,module,event,msg,result}'
+```
+
+**关键事件**（`event` 字段，可直接检索）：
+
+| event | 说明 |
+| --- | --- |
+| `http.request` | 每个请求一条：方法、路径、状态码、耗时、来源地址 |
+| `rpc.call` | 每次 RPC：函数名、结果、耗时、会话 id、访客 key（打码） |
+| `auth.login` / `auth.lockout` | 登录成功 / 失败 / 触发防爆破 |
+| `ticket.claim` / `ticket.release` / `ticket.resolve` | 工单锁变更（含冲突 `result=conflict`） |
+| `rate_limit` | 聊天或分析查询触发限流 |
+| `model.call` | 应答生成耗时与字数 |
+| `analytics.query` | 分析查询审计（谁、问了什么、命中哪个指标） |
+
+> 轮询类接口（`cs_guest_poll`、`cs_agent_queue`）的调用日志降到 `debug`，避免生产日志被轮询刷满。
+
+**健康检查**：`GET /health`（无需鉴权）
+
+```bash
+curl -s http://localhost:8080/health | jq
+# { "status": "ok", "checks": { "config": {...}, "data_dir": {"writable": true}, "store": {"ok": true} }, "counts": {...} }
+```
+
+全部检查通过返回 `200`，任一失败（数据目录不可写、store 读写报错）返回 `503`。**不返回**绝对路径与任何口令 / 密钥，可直接给探针使用。
+
+**异常收敛**：参数错误 400、请求体超限 413、业务失败 `{ok:false,error}`、未预料异常 500——响应体永远是中文人话，堆栈只进日志；500 响应里带 `trace_id` 便于对齐日志。
+
+---
 ## 界面截图
 
 截图统一放在 [`docs/screenshots/`](docs/screenshots/)，文件名与页面一一对应：

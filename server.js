@@ -37,6 +37,14 @@ const rpc = require('./server/rpc');
 const reply = require('./server/reply');
 const analytics = require('./server/analytics');
 const logger = require('./server/logger');
+const health = require('./server/health');
+
+// 日志按环境配置：生产 JSON 行、不带堆栈；开发可读文本、带堆栈
+logger.configure({
+  format: APP_CONFIG.log.format,
+  includeStack: APP_CONFIG.log.includeStack,
+  service: 'kubao-support',
+});
 
 const log = logger.create(APP_CONFIG.log.level, 'http');
 
@@ -100,18 +108,27 @@ function readBody(req) {
   const limit = APP_CONFIG.server.bodyLimitBytes;
   return new Promise((resolve, reject) => {
     let size = 0;
+    let tooLarge = false;
     const chunks = [];
     req.on('data', (c) => {
+      // 超限后不再累积，但仍把剩余数据读完 —— 直接 destroy 会让客户端看到连接被重置，
+      // 拿不到 413 这个明确答复
+      if (tooLarge) return;
       size += c.length;
       if (size > limit) {
+        tooLarge = true;
+        chunks.length = 0;
         reject(new BodyTooLarge('payload too large'));
-        req.destroy();
         return;
       }
       chunks.push(c);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
+    req.on('end', () => {
+      if (!tooLarge) resolve(Buffer.concat(chunks).toString('utf8'));
+    });
+    req.on('error', (e) => {
+      if (!tooLarge) reject(e);
+    });
   });
 }
 
@@ -121,6 +138,7 @@ async function readJsonBody(req, res) {
     return { ok: true, value: JSON.parse(raw || '{}') };
   } catch (e) {
     if (e instanceof BodyTooLarge) {
+      res.setHeader('Connection', 'close');
       sendJson(res, 413, { error: { message: '请求体超过上限（' + APP_CONFIG.server.bodyLimitBytes + ' 字节）' } });
     } else {
       sendJson(res, 400, { error: { message: '请求格式错误' } });
@@ -221,6 +239,8 @@ async function handleChat(req, res) {
   }
 
   let text = '';
+  const modelTimer = logger.timer();
+  const taskLabel = task || 'auto';
   try {
     if (task === 'analytics') {
       const result = await analytics.query({
@@ -234,8 +254,16 @@ async function handleChat(req, res) {
       // 不带 task 时由 reply 按 system 提示词推断，兼容 GitHub Pages 静态版与旧调用
       text = reply.respond({ task: task || undefined, messages }).text || '';
     }
+    log.info('应答生成完成', {
+      event: 'model.call',
+      task: taskLabel,
+      result: 'ok',
+      duration_ms: modelTimer(),
+      chars: text.length,
+      history: Array.isArray(messages) ? messages.length : 0,
+    });
   } catch (e) {
-    log.error('chat 生成失败：' + (e && e.stack ? e.stack : e));
+    log.error('应答生成失败', { event: 'model.call', task: taskLabel, result: 'error', duration_ms: modelTimer(), err: e });
     text = '回复生成失败，请稍后重试。';
   }
 
@@ -330,17 +358,59 @@ function serveStatic(req, res, pathname) {
   });
 }
 
+/* ---------------------------- 链路追踪与异常兜底 ---------------------------- */
+
+const TRACE_HEADER = 'x-request-id';
+
+/** 复用调用方传入的 request id（如 Nginx 生成的），否则新生成一个 */
+function pickTraceId(req) {
+  const incoming = req.headers[TRACE_HEADER];
+  if (typeof incoming === 'string' && /^[A-Za-z0-9._-]{6,64}$/.test(incoming)) return incoming;
+  return logger.newTraceId();
+}
+
+function clientAddr(req) {
+  return (req.socket && req.socket.remoteAddress) || '-';
+}
+
+/** 任何未预料的异常都收敛成一句人话，堆栈只进日志 */
+function handleFatal(req, res, err, where) {
+  log.error('请求处理异常', {
+    event: 'http.error',
+    where: where || 'dispatch',
+    method: req.method,
+    path: (req.url || '').split('?')[0],
+    err: err,
+  });
+  const traceId = logger.currentContext().traceId || null;
+  if (res.headersSent) {
+    try {
+      res.end();
+    } catch (e) {
+      /* 已经断了 */
+    }
+    return;
+  }
+  sendJson(res, 500, {
+    error: { message: '服务暂时不可用，请稍后重试', trace_id: traceId },
+  });
+}
+
+function handleHealth(req, res) {
+  let snap;
+  try {
+    snap = health.snapshot();
+  } catch (e) {
+    log.error('健康检查异常', { event: 'health.error', err: e });
+    return sendJson(res, 503, { status: 'degraded', checks: { health: { ok: false } } });
+  }
+  log.debug('健康检查', { event: 'health.check', status: snap.status, uptime_s: snap.uptime_s });
+  return sendJson(res, snap.status === 'ok' ? 200 : 503, snap);
+}
+
 /* ---------------------------- 路由 ---------------------------- */
 
-const server = http.createServer((req, res) => {
-  let pathname;
-  try {
-    pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
-  } catch (e) {
-    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end('400 Bad Request');
-  }
-
+function dispatch(req, res, pathname) {
   const isApi = pathname.indexOf('/api/') === 0;
   if (isApi) {
     const allowed = applyCors(req, res);
@@ -363,12 +433,69 @@ const server = http.createServer((req, res) => {
     return sendJson(res, 404, { error: { message: '接口不存在' } });
   }
 
+  if (pathname === '/health' || pathname === '/api/health') return handleHealth(req, res);
   if (pathname === '/api/faqs') return handleFaqs(req, res);
   if (pathname === '/api/models') return handleModels(req, res);
   if (pathname === '/api/runtime-config') return handleRuntimeConfig(req, res);
 
   if (pathname === '/' || pathname === '') pathname = '/index.html';
   return serveStatic(req, res, pathname);
+}
+
+const server = http.createServer((req, res) => {
+  let pathname;
+  try {
+    pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+  } catch (e) {
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('400 Bad Request');
+  }
+
+  const traceId = pickTraceId(req);
+  res.setHeader('X-Trace-Id', traceId);
+
+  // 整个请求（含异步链路）都跑在同一个 traceId 上下文里，业务代码不用关心
+  logger.withContext({ traceId }, () => {
+    const elapsed = logger.timer();
+    let settled = false;
+
+    const finish = (extra) => {
+      if (settled) return;
+      settled = true;
+      log.info('请求完成', Object.assign(
+        {
+          event: 'http.request',
+          method: req.method,
+          path: pathname,
+          status: res.statusCode,
+          duration_ms: elapsed(),
+          remote_addr: clientAddr(req),
+        },
+        extra || {}
+      ));
+    };
+    res.on('finish', () => finish());
+    res.on('close', () => finish(res.writableFinished ? {} : { aborted: true }));
+
+    log.debug('请求开始', { event: 'http.start', method: req.method, path: pathname });
+
+    try {
+      const out = dispatch(req, res, pathname);
+      if (out && typeof out.catch === 'function') {
+        out.catch((e) => {
+          if (e && e.constructor && e.constructor.name === 'BodyTooLarge') return;
+          handleFatal(req, res, e, 'async-handler');
+        });
+      }
+    } catch (e) {
+      handleFatal(req, res, e, 'sync-handler');
+    }
+  });
+});
+
+server.on('clientError', (err, socket) => {
+  log.warn('客户端连接异常', { event: 'http.client_error', code: err && err.code });
+  if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
 });
 
 server.listen(PORT, HOST, () => {
@@ -380,6 +507,8 @@ server.listen(PORT, HOST, () => {
       APP_CONFIG.limits.analyticsPerMinute + ' 次/分/操作者'
   );
   log.info('CORS：' + (APP_CONFIG.cors.allowAny ? '*' : APP_CONFIG.cors.origins.join(',') || '仅同源'));
+  log.info('日志：level=' + APP_CONFIG.log.level + ' format=' + APP_CONFIG.log.format + ' stack=' + APP_CONFIG.log.includeStack);
+  log.info('健康检查：http://localhost:' + PORT + '/health');
   if (APP_CONFIG.security.usingDefaultAdminCode) {
     log.warn('正在使用默认管理员口令，部署前务必通过 CS_ADMIN_CODE 改为独立强口令');
   }
@@ -388,6 +517,13 @@ server.listen(PORT, HOST, () => {
   }
 });
 
+/* 进程级兜底：永远不让堆栈裸奔到调用方，也不让进程静默假死 */
 process.on('unhandledRejection', (e) => {
-  log.error('未捕获的 Promise 异常：' + (e && e.stack ? e.stack : e));
+  log.error('未捕获的 Promise 异常', { event: 'process.unhandledRejection', err: e });
+});
+
+process.on('uncaughtException', (e) => {
+  log.error('未捕获异常，进程即将退出', { event: 'process.uncaughtException', err: e });
+  process.exitCode = 1;
+  setTimeout(() => process.exit(1), 50);
 });

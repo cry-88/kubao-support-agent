@@ -9,8 +9,19 @@ const store = require('./store');
 const analytics = require('./analytics');
 const reply = require('./reply');
 const config = require('./config');
+const logger = require('./logger');
 
 const APP_CONFIG = config.get();
+const log = logger.create(APP_CONFIG.log.level, 'rpc');
+
+/** 轮询类接口调用频繁，降到 debug 级，避免把日志淹掉 */
+const QUIET_FNS = ['cs_guest_poll', 'cs_agent_queue'];
+
+/** 会话标识打码：guest_key 相当于凭证，不能原样落日志 */
+function maskGuest(key) {
+  const s = String(key || '');
+  return s ? s.slice(0, 6) + '***' : null;
+}
 
 const { md5 } = store;
 
@@ -194,7 +205,17 @@ function csGuestAppend(p, db) {
       const c = findConversation(db, m.conversation_id);
       return c && c.guest_key === p.p_guest_key;
     }).length;
-    if (recent >= APP_CONFIG.limits.chatMessagesPerMinute) return { ok: false, error: 'rate_limited' };
+    if (recent >= APP_CONFIG.limits.chatMessagesPerMinute) {
+      log.warn('触发发送限流', {
+        event: 'rate_limit',
+        scope: 'chat',
+        guest: maskGuest(p.p_guest_key),
+        conversation_id: p.p_conversation_id,
+        limit_per_minute: APP_CONFIG.limits.chatMessagesPerMinute,
+        result: 'limited',
+      });
+      return { ok: false, error: 'rate_limited' };
+    }
   }
   const id = pushMessage(db, conv.id, p.p_role, p.p_content, p.p_intent, p.p_meta);
   store.save();
@@ -305,22 +326,55 @@ function csConsoleLogin(p, db) {
   const globalFail = db.login_attempts.filter(
     (a) => a.ok === false && new Date(a.created_at).getTime() > since
   ).length;
-  if (globalFail >= L.loginMaxGlobal) return { ok: false, error: 'too_many_attempts' };
+  if (globalFail >= L.loginMaxGlobal) {
+    log.error('登录已全局锁定', {
+      event: 'auth.lockout',
+      scope: 'global',
+      failures: globalFail,
+      window_minutes: L.loginWindowMinutes,
+      result: 'reject',
+    });
+    return { ok: false, error: 'too_many_attempts' };
+  }
 
   const codeFail = db.login_attempts.filter(
     (a) => a.ok === false && a.code_hash === hash && new Date(a.created_at).getTime() > since
   ).length;
-  if (codeFail >= L.loginMaxPerCode) return { ok: false, error: 'too_many_attempts' };
+  if (codeFail >= L.loginMaxPerCode) {
+    log.error('登录已按口令锁定', {
+      event: 'auth.lockout',
+      scope: 'code',
+      failures: codeFail,
+      window_minutes: L.loginWindowMinutes,
+      result: 'reject',
+    });
+    return { ok: false, error: 'too_many_attempts' };
+  }
 
   const who = operator(code, db);
   if (!who) {
     db.login_attempts.push({ id: store.nextId('login_attempts'), code_hash: hash, ok: false, created_at: nowIso() });
     store.save();
+    log.warn('登录失败', {
+      event: 'auth.login',
+      result: 'fail',
+      reason: 'bad_code',
+      code_failures: codeFail + 1,
+      global_failures: globalFail + 1,
+      limit_per_code: L.loginMaxPerCode,
+    });
     return { ok: false, error: 'unauthorized' };
   }
   db.login_attempts.push({ id: store.nextId('login_attempts'), code_hash: hash, ok: true, created_at: nowIso() });
   if (who.agent) who.agent.last_seen_at = nowIso();
   store.save();
+  log.info('登录成功', {
+    event: 'auth.login',
+    result: 'ok',
+    operator_id: who.operator_id,
+    operator_name: who.operator_name,
+    is_admin: who.is_admin,
+  });
   return { ok: true, agent_id: who.operator_id, name: who.operator_name, is_admin: who.is_admin };
 }
 
@@ -385,8 +439,26 @@ function csAgentClaim(p, db) {
   if (!who) return unauthorized();
 
   const conv = findConversation(db, p.p_conversation_id);
-  if (!conv || conv.status !== 'handoff') return { ok: false, error: 'not_in_queue' };
+  if (!conv || conv.status !== 'handoff') {
+    log.warn('认领失败：工单不在待接入队列', {
+      event: 'ticket.claim',
+      result: 'not_in_queue',
+      conversation_id: p.p_conversation_id,
+      operator_id: who.operator_id,
+      operator_name: who.operator_name,
+    });
+    return { ok: false, error: 'not_in_queue' };
+  }
   if (conv.assignee_id != null && Number(conv.assignee_id) !== Number(who.operator_id)) {
+    log.warn('认领冲突：已被其他坐席锁定', {
+      event: 'ticket.claim',
+      result: 'conflict',
+      conversation_id: conv.id,
+      operator_id: who.operator_id,
+      operator_name: who.operator_name,
+      held_by: conv.assignee_name || null,
+      held_by_id: conv.assignee_id,
+    });
     return { ok: false, error: 'claimed_by_other', assignee: conv.assignee_name || '其他客服' };
   }
   conv.assignee_id = who.operator_id;
@@ -394,6 +466,13 @@ function csAgentClaim(p, db) {
   conv.claimed_at = conv.claimed_at || nowIso();
   conv.updated_at = nowIso();
   store.save();
+  log.info('工单已认领', {
+    event: 'ticket.claim',
+    result: 'ok',
+    conversation_id: conv.id,
+    operator_id: who.operator_id,
+    operator_name: who.operator_name,
+  });
   return { ok: true, assignee: who.operator_name };
 }
 
@@ -402,6 +481,13 @@ function csAgentRelease(p, db) {
   if (!who) return unauthorized();
   const conv = findConversation(db, p.p_conversation_id);
   if (!conv || Number(conv.assignee_id) !== Number(who.operator_id) || conv.status !== 'handoff') {
+    log.warn('释放失败：不是本人名下工单', {
+      event: 'ticket.release',
+      result: 'reject',
+      conversation_id: p.p_conversation_id,
+      operator_id: who.operator_id,
+      assignee_id: conv ? conv.assignee_id : null,
+    });
     return { ok: false };
   }
   conv.assignee_id = null;
@@ -409,6 +495,13 @@ function csAgentRelease(p, db) {
   conv.claimed_at = null;
   conv.updated_at = nowIso();
   store.save();
+  log.info('工单已释放回队列', {
+    event: 'ticket.release',
+    result: 'ok',
+    conversation_id: conv.id,
+    operator_id: who.operator_id,
+    operator_name: who.operator_name,
+  });
   return { ok: true };
 }
 
@@ -468,10 +561,20 @@ function csAgentReply(p, db) {
     kind: 'agent',
     agent_name: who.operator_name,
   });
+  const autoAssigned = conv.assignee_id == null;
   conv.assignee_id = conv.assignee_id == null ? who.operator_id : conv.assignee_id;
   conv.assignee_name = conv.assignee_name || who.operator_name;
   conv.claimed_at = conv.claimed_at || nowIso();
   store.save();
+  if (autoAssigned) {
+    log.info('回复时自动认领工单', {
+      event: 'ticket.auto_claim',
+      result: 'ok',
+      conversation_id: conv.id,
+      operator_id: who.operator_id,
+      operator_name: who.operator_name,
+    });
+  }
   return { ok: true, id, agent_name: who.operator_name };
 }
 
@@ -489,6 +592,14 @@ function csAgentResolve(p, db) {
     agent_name: who.operator_name,
   });
   store.save();
+  log.info('工单已解决', {
+    event: 'ticket.resolve',
+    result: 'ok',
+    conversation_id: conv.id,
+    operator_id: who.operator_id,
+    operator_name: who.operator_name,
+    via: 'agent',
+  });
   return { ok: true };
 }
 
@@ -625,6 +736,13 @@ function csAdminResolve(p, db) {
     conv.updated_at = nowIso();
   }
   store.save();
+  log.info(resolved ? '管理端标记解决' : '管理端退回队列', {
+    event: 'ticket.resolve',
+    result: 'ok',
+    conversation_id: conv.id,
+    via: 'admin',
+    resolved,
+  });
   return { ok: true };
 }
 
@@ -828,14 +946,40 @@ const HANDLERS = {
 /**
  * 统一分发。返回 Promise：阶段2 起的分析类函数是异步的（预留模型兜底），
  * 同步函数会被 Promise.resolve 包一层，调用方统一 await。
+ *
+ * 每次调用打一条结构化日志：接口名 + 结果 + 耗时 + 关键业务标识（会话 id / 访客 key 打码）。
+ * 异常一律收敛成 { ok:false, error }，堆栈只进日志、不回给前端。
  */
-function call(name, params) {
+async function call(name, params) {
+  const elapsed = logger.timer();
+  const p = params || {};
+  const base = { event: 'rpc.call', fn: name };
+  if (p.p_conversation_id != null) base.conversation_id = p.p_conversation_id;
+  if (p.p_guest_key != null) base.guest = maskGuest(p.p_guest_key);
+  if (p.p_order_no != null) base.order_no = p.p_order_no;
+
   const fn = HANDLERS[name];
-  if (!fn) return Promise.resolve({ ok: false, error: 'unknown function: ' + name });
+  if (!fn) {
+    log.warn('调用未知函数', Object.assign({}, base, { result: 'reject', duration_ms: elapsed() }));
+    return { ok: false, error: 'unknown function: ' + name };
+  }
+
   try {
-    return Promise.resolve(fn(params || {}, store.db));
+    const data = await Promise.resolve(fn(p, store.db));
+    const failed = !!(data && data.ok === false);
+    const fields = Object.assign({}, base, { result: failed ? 'fail' : 'ok', duration_ms: elapsed() });
+    if (failed) {
+      fields.error = data.error || null;
+      log.warn('业务处理失败', fields);
+    } else if (QUIET_FNS.indexOf(name) >= 0) {
+      log.debug('调用完成', fields);
+    } else {
+      log.info('调用完成', fields);
+    }
+    return data;
   } catch (e) {
-    return Promise.resolve({ ok: false, error: '服务端异常：' + (e && e.message ? e.message : '未知错误') });
+    log.error('函数执行异常', Object.assign({}, base, { result: 'error', duration_ms: elapsed(), err: e }));
+    return { ok: false, error: '服务端异常，请稍后重试' };
   }
 }
 
