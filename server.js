@@ -18,6 +18,7 @@ const path = require('path');
 const store = require('./server/store');
 const rpc = require('./server/rpc');
 const reply = require('./server/reply');
+const analytics = require('./server/analytics');
 
 const ROOT = __dirname;
 const PORT = Number(process.env.PORT) || 8080;
@@ -100,7 +101,7 @@ async function handleRpc(req, res) {
   const params = (payload && payload.params) || {};
   if (!name) return sendJson(res, 400, { error: { message: '缺少函数名' } });
   try {
-    const data = rpc.call(name, params);
+    const data = await rpc.call(name, params);
     return sendJson(res, 200, { data });
   } catch (e) {
     console.error('[rpc] ' + name + ' 执行失败：', e);
@@ -140,9 +141,35 @@ async function handleChat(req, res) {
   }
 
   const messages = (payload && payload.messages) || [];
+  const task = String((payload && payload.task) || '').trim();
+  const ALLOWED_TASKS = ['answer', 'classify', 'summary', 'analytics'];
+  if (task && ALLOWED_TASKS.indexOf(task) < 0) {
+    return sendJson(res, 400, { error: { message: '不支持的任务类型：' + task, supported: ALLOWED_TASKS } });
+  }
+
+  // 数据分析会穿过全站工单，必须凭管理员口令；公开聊天页不会走这个分支
+  let authCode = '';
+  if (task === 'analytics') {
+    authCode = String((payload && payload.authCode) || '');
+    if (!rpc.checkAdmin(authCode)) {
+      return sendJson(res, 403, { error: { message: '数据分析需要管理员口令（authCode）' } });
+    }
+  }
+
   let text = '';
   try {
-    text = reply.respond(messages).text || '';
+    if (task === 'analytics') {
+      const result = await analytics.query({
+        text: lastUserText(messages),
+        db: store.db,
+        actor: 'chat:' + store.md5(authCode).slice(0, 8),
+        modelParse: reply.parseAnalyticsFallback,
+      });
+      text = analytics.formatAnswer(result);
+    } else {
+      // 不带 task 时由 reply 按 system 提示词推断，兼容 GitHub Pages 静态版与旧调用
+      text = reply.respond({ task: task || undefined, messages }).text || '';
+    }
   } catch (e) {
     console.error('[chat] 生成失败：', e);
     text = '回复生成失败，请稍后重试。';
@@ -187,6 +214,14 @@ async function handleChat(req, res) {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function lastUserText(messages) {
+  const list = Array.isArray(messages) ? messages : [];
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (list[i] && list[i].role === 'user') return String(list[i].content || '');
+  }
+  return '';
 }
 
 /* ---------------------------- 静态文件 ---------------------------- */

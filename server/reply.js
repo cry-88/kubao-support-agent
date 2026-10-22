@@ -173,25 +173,61 @@ function summarize(transcript) {
 
 /* ---------------- 统一入口 ---------------- */
 
+const TASKS = ['answer', 'classify', 'summary', 'analytics_parse'];
+
+/** 旧版客户端不带 task：按 system 提示词特征串推断，保证 GitHub Pages 静态版与老调用不受影响 */
+function detectTask(list) {
+  const system = (list.find((m) => m.role === 'system') || {}).content || '';
+  if (/意图分类器/.test(system)) return 'classify';
+  if (/会话摘要助手/.test(system)) return 'summary';
+  return 'answer';
+}
+
 /**
- * @returns {{ text: string }} 需要流式吐出的完整文本
+ * @param {Array|{task:string, messages:Array}} input
+ *   兼容两种调用：respond(messages)（旧）与 respond({task, messages})（新）
+ * @returns {{text: string, task: string}}
  */
-function respond(messages) {
-  const list = Array.isArray(messages) ? messages : [];
+function respond(input) {
+  const isLegacy = Array.isArray(input);
+  const list = isLegacy ? input : ((input && input.messages) || []);
+  const explicit = !isLegacy && input ? input.task : null;
+  const task = TASKS.indexOf(explicit) >= 0 ? explicit : detectTask(list);
+
   const system = (list.find((m) => m.role === 'system') || {}).content || '';
   const userText = lastUserMessage(list);
 
-  if (/意图分类器/.test(system)) {
+  if (task === 'classify') {
     const target = (userText.match(/用户消息：([\s\S]*)$/) || [, userText])[1];
     const r = detectIntent(target);
-    return { text: JSON.stringify({ intent: r.intent, confidence: r.confidence }) };
+    return { text: JSON.stringify({ intent: r.intent, confidence: r.confidence }), task };
   }
 
-  if (/会话摘要助手/.test(system)) {
-    return { text: summarize(userText) };
+  if (task === 'summary') {
+    return { text: summarize(userText), task };
   }
 
-  return { text: buildAnswer(system, userText) };
+  if (task === 'analytics_parse') {
+    // 预留的模型兜底位：接入真实模型后，这里返回 {"metric":"...","days":14,"filters":{...}}
+    // 当前无模型凭据，返回 metric=null，由 analytics 层回退到"换个说法"提示，绝不猜测指标。
+    return { text: JSON.stringify({ metric: null, reason: 'model_not_configured' }), task };
+  }
+
+  return { text: buildAnswer(system, userText), task };
 }
 
-module.exports = { respond, detectIntent, summarize, buildAnswer, parseFaqs, parseOrder };
+/**
+ * 数据分析的模型兜底入口：复用同一个 respond 通道，不新建模型客户端
+ * @returns {Promise<object|null>} 解析出的 DSL 片段，拿不到就返回 null
+ */
+async function parseAnalyticsFallback(text) {
+  try {
+    const out = respond({ task: 'analytics_parse', messages: [{ role: 'user', content: String(text || '') }] });
+    const parsed = JSON.parse(out.text);
+    return parsed && parsed.metric ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+module.exports = { respond, detectTask, parseAnalyticsFallback, detectIntent, summarize, buildAnswer, parseFaqs, parseOrder };

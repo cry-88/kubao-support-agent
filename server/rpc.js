@@ -6,6 +6,8 @@
 'use strict';
 
 const store = require('./store');
+const analytics = require('./analytics');
+const reply = require('./reply');
 
 const { md5 } = store;
 
@@ -694,6 +696,43 @@ function csAdminGaps(p, db) {
 
 function csAdminExport(p, db) {
   if (!isAdmin(p.p_code, db)) return unauthorized();
+  const dataset = String(p.p_dataset || 'messages');
+
+  if (dataset === 'analytics') {
+    // 阶段2 新增：分析结果导出。复用同一个导出入口，老调用（不带 p_dataset）行为不变。
+    return analytics
+      .query({
+        dsl: p.p_dsl || null,
+        text: p.p_query || '',
+        db,
+        actor: 'admin:' + md5(p.p_code).slice(0, 8),
+        modelParse: null,
+      })
+      .then((result) => {
+        if (!result || result.ok === false) {
+          return { ok: false, error: (result && result.error) || '导出失败', suggestions: (result && result.suggestions) || [] };
+        }
+        const csv = analytics.toCsv(result);
+        if (!csv) return { ok: false, error: '该查询没有可导出的数据' };
+        return {
+          ok: true,
+          dataset: 'analytics',
+          metric: result.metric,
+          metric_label: result.metric_label,
+          range: result.range,
+          summary: result.summary,
+          row_count: result.rows.length,
+          filename:
+            '工单分析_' + result.metric_label + '_' + result.range.from + '_' + result.range.to + '.csv',
+          csv,
+        };
+      });
+  }
+
+  if (dataset !== 'messages') {
+    return { ok: false, error: '不支持的数据集：' + dataset, supported: ['messages', 'analytics'] };
+  }
+
   const status = p.p_status || 'all';
   const convs = db.conversations
     .filter((c) => status === 'all' || c.status === status)
@@ -721,6 +760,30 @@ function csAdminExport(p, db) {
     if (items.length >= 5000) break;
   }
   return { ok: true, items };
+}
+
+/* ============================== 数据分析 ============================== */
+
+/** 管理员口令只读校验（不写登录审计，供 /api/chat 的 task=analytics 使用） */
+function checkAdmin(code) {
+  return isAdmin(code, store.db);
+}
+
+async function csAdminAnalytics(p, db) {
+  if (!isAdmin(p.p_code, db)) return unauthorized();
+  const result = await analytics.query({
+    text: p.p_query || '',
+    dsl: p.p_dsl || null,
+    db,
+    actor: 'admin:' + md5(p.p_code).slice(0, 8),
+    modelParse: reply.parseAnalyticsFallback,
+  });
+  return result;
+}
+
+function csAdminAnalyticsMeta(p, db) {
+  if (!isAdmin(p.p_code, db)) return unauthorized();
+  return analytics.meta();
 }
 
 /* ============================== 分发 ============================== */
@@ -753,12 +816,22 @@ const HANDLERS = {
   cs_admin_faq_delete: csAdminFaqDelete,
   cs_admin_gaps: csAdminGaps,
   cs_admin_export: csAdminExport,
+  cs_admin_analytics: csAdminAnalytics,
+  cs_admin_analytics_meta: csAdminAnalyticsMeta,
 };
 
+/**
+ * 统一分发。返回 Promise：阶段2 起的分析类函数是异步的（预留模型兜底），
+ * 同步函数会被 Promise.resolve 包一层，调用方统一 await。
+ */
 function call(name, params) {
   const fn = HANDLERS[name];
-  if (!fn) return { ok: false, error: 'unknown function: ' + name };
-  return fn(params || {}, store.db);
+  if (!fn) return Promise.resolve({ ok: false, error: 'unknown function: ' + name });
+  try {
+    return Promise.resolve(fn(params || {}, store.db));
+  } catch (e) {
+    return Promise.resolve({ ok: false, error: '服务端异常：' + (e && e.message ? e.message : '未知错误') });
+  }
 }
 
-module.exports = { call, HANDLERS };
+module.exports = { call, HANDLERS, checkAdmin };
