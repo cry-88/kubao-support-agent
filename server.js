@@ -74,10 +74,13 @@ const server = http.createServer((req, res) => {
 
   fs.stat(filePath, (err, stat) => {
     if (err || !stat.isFile()) return sendNotFound(res);
+    var ext = path.extname(filePath).toLowerCase();
+    var isHtml = ext === '.html' || ext === '.htm';
     res.writeHead(200, {
-      'Content-Type': MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
+      'Content-Type': MIME[ext] || 'application/octet-stream',
       'Content-Length': stat.size,
-      'Cache-Control': 'no-cache',
+      // HTML 一律不缓存，避免发布后仍拿到旧页面
+      'Cache-Control': isHtml ? 'no-store, no-cache, must-revalidate' : 'no-cache',
     });
     fs.createReadStream(filePath).pipe(res);
   });
