@@ -1,13 +1,14 @@
 /**
- * 哭包 · 智能客服 —— 本地服务端（零依赖）
+ * 哭包 · 智能客服 —— 服务端入口（零依赖）
  *
- * 一个进程同时做三件事：
- *   1) 静态文件服务：index.html / admin.html / assets/*
+ * 一个进程同时做四件事：
+ *   1) 静态文件服务：index.html / admin.html / assets/*（目录、404 页、缓存策略按环境配置）
  *   2) 数据接口：POST /api/rpc（对齐 schema.sql 的 28 个函数）、GET /api/faqs
- *   3) 流式应答：POST /api/chat（SSE，替代云端大模型通道）
+ *   3) 流式应答：POST /api/chat（SSE；支持显式 task 分流）
+ *   4) 运行信息：GET /api/runtime-config（供前端/运维判断环境，不含任何密钥）
  *
- * 启动：node server.js   →  http://localhost:8080
- * 部署：监听 process.env.PORT，绑定 0.0.0.0
+ * 启动：NODE_ENV=development node server.js
+ * 配置：见 server/config.js 与 env/*.env.example
  */
 'use strict';
 
@@ -15,14 +16,37 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
+// 配置必须最先加载：它会读 env/<NODE_ENV>.env 与 .env，并把值回填给后续模块
+const config = require('./server/config');
+
+let APP_CONFIG;
+try {
+  APP_CONFIG = config.get();
+} catch (e) {
+  if (e && e.code === 'CONFIG_INVALID') {
+    // 配置错误是给运维看的，只输出可读原因，不抛堆栈
+    process.stderr.write('\n启动失败：' + String(e.message).replace(/^\[config\]\s*/, '') + '\n');
+    process.stderr.write('请检查 env/' + String(process.env.NODE_ENV || 'development') + '.env、.env 或环境变量；变量总表见 .env.example\n\n');
+    process.exit(1);
+  }
+  throw e;
+}
+
 const store = require('./server/store');
 const rpc = require('./server/rpc');
 const reply = require('./server/reply');
 const analytics = require('./server/analytics');
+const logger = require('./server/logger');
 
-const ROOT = __dirname;
-const PORT = Number(process.env.PORT) || 8080;
-const PUBLIC_DIR = ROOT;
+const log = logger.create(APP_CONFIG.log.level, 'http');
+
+const PORT = APP_CONFIG.server.port;
+const HOST = APP_CONFIG.server.host;
+const PUBLIC_DIR = APP_CONFIG.static.root;
+const NOT_FOUND_PAGE = APP_CONFIG.static.notFoundFile;
+
+/** 即使静态根指向项目根，也不允许直接读到的目录/文件 */
+const BLOCKED_TOP_DIRS = ['data', 'env', 'server', 'test', 'node_modules', '.git', '.github', '.workbuddy'];
 
 store.load();
 
@@ -43,7 +67,7 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 
-const NOT_FOUND_PAGE = path.join(PUBLIC_DIR, '404.html');
+/* ---------------------------- 基础响应 ---------------------------- */
 
 function sendJson(res, code, body) {
   const buf = Buffer.from(JSON.stringify(body), 'utf8');
@@ -64,20 +88,23 @@ function sendNotFound(res) {
     res.writeHead(404, {
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Length': buf.length,
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-store',
     });
     res.end(buf);
   });
 }
 
-function readBody(req, limit) {
+class BodyTooLarge extends Error {}
+
+function readBody(req) {
+  const limit = APP_CONFIG.server.bodyLimitBytes;
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > (limit || 2 * 1024 * 1024)) {
-        reject(new Error('payload too large'));
+      if (size > limit) {
+        reject(new BodyTooLarge('payload too large'));
         req.destroy();
         return;
       }
@@ -88,23 +115,54 @@ function readBody(req, limit) {
   });
 }
 
+async function readJsonBody(req, res) {
+  try {
+    const raw = await readBody(req);
+    return { ok: true, value: JSON.parse(raw || '{}') };
+  } catch (e) {
+    if (e instanceof BodyTooLarge) {
+      sendJson(res, 413, { error: { message: '请求体超过上限（' + APP_CONFIG.server.bodyLimitBytes + ' 字节）' } });
+    } else {
+      sendJson(res, 400, { error: { message: '请求格式错误' } });
+    }
+    return { ok: false };
+  }
+}
+
+/* ---------------------------- CORS ---------------------------- */
+
+/**
+ * 按环境放行跨域来源：白名单命中才回写头，未命中一并不写（浏览器自然拦截）。
+ * 无 Origin（同源请求、curl、服务端调用）不做任何处理。
+ */
+function applyCors(req, res) {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  if (!APP_CONFIG.cors.allows(origin)) return false;
+  res.setHeader('Access-Control-Allow-Origin', APP_CONFIG.cors.allowAny ? '*' : origin);
+  res.setHeader('Vary', 'Origin');
+  if (APP_CONFIG.cors.credentials) res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Max-Age', '600');
+  return true;
+}
+
 /* ---------------------------- API ---------------------------- */
 
 async function handleRpc(req, res) {
-  let payload;
-  try {
-    payload = JSON.parse((await readBody(req)) || '{}');
-  } catch (e) {
-    return sendJson(res, 400, { error: { message: '请求格式错误' } });
-  }
-  const name = payload && payload.name;
-  const params = (payload && payload.params) || {};
+  const body = await readJsonBody(req, res);
+  if (!body.ok) return;
+
+  const name = body.value && body.value.name;
+  const params = (body.value && body.value.params) || {};
   if (!name) return sendJson(res, 400, { error: { message: '缺少函数名' } });
+
   try {
     const data = await rpc.call(name, params);
     return sendJson(res, 200, { data });
   } catch (e) {
-    console.error('[rpc] ' + name + ' 执行失败：', e);
+    log.error('rpc ' + name + ' 执行失败：' + (e && e.stack ? e.stack : e));
     return sendJson(res, 200, { data: { ok: false, error: '服务端异常，请稍后重试' } });
   }
 }
@@ -127,21 +185,27 @@ function handleFaqs(req, res) {
 
 function handleModels(req, res) {
   return sendJson(res, 200, [
-    { id: 'kubao-local-reply', name: '哭包本地应答引擎', disabled: false, context_window: 8192 },
+    {
+      id: APP_CONFIG.model.name,
+      name: APP_CONFIG.model.enabled ? APP_CONFIG.model.name : '哭包本地应答引擎',
+      disabled: false,
+      context_window: 8192,
+    },
   ]);
+}
+
+function handleRuntimeConfig(req, res) {
+  return sendJson(res, 200, config.runtimeConfig(APP_CONFIG));
 }
 
 /** 把答案按小片流式吐出，前端表现与真实模型一致（含「停止生成」） */
 async function handleChat(req, res) {
-  let payload;
-  try {
-    payload = JSON.parse((await readBody(req)) || '{}');
-  } catch (e) {
-    return sendJson(res, 400, { error: { message: '请求格式错误' } });
-  }
+  const body = await readJsonBody(req, res);
+  if (!body.ok) return;
+  const payload = body.value || {};
 
-  const messages = (payload && payload.messages) || [];
-  const task = String((payload && payload.task) || '').trim();
+  const messages = payload.messages || [];
+  const task = String(payload.task || '').trim();
   const ALLOWED_TASKS = ['answer', 'classify', 'summary', 'analytics'];
   if (task && ALLOWED_TASKS.indexOf(task) < 0) {
     return sendJson(res, 400, { error: { message: '不支持的任务类型：' + task, supported: ALLOWED_TASKS } });
@@ -150,7 +214,7 @@ async function handleChat(req, res) {
   // 数据分析会穿过全站工单，必须凭管理员口令；公开聊天页不会走这个分支
   let authCode = '';
   if (task === 'analytics') {
-    authCode = String((payload && payload.authCode) || '');
+    authCode = String(payload.authCode || '');
     if (!rpc.checkAdmin(authCode)) {
       return sendJson(res, 403, { error: { message: '数据分析需要管理员口令（authCode）' } });
     }
@@ -171,7 +235,7 @@ async function handleChat(req, res) {
       text = reply.respond({ task: task || undefined, messages }).text || '';
     }
   } catch (e) {
-    console.error('[chat] 生成失败：', e);
+    log.error('chat 生成失败：' + (e && e.stack ? e.stack : e));
     text = '回复生成失败，请稍后重试。';
   }
 
@@ -226,24 +290,41 @@ function lastUserText(messages) {
 
 /* ---------------------------- 静态文件 ---------------------------- */
 
+function isBlockedPath(filePath) {
+  const rel = path.relative(PUBLIC_DIR, filePath);
+  if (rel.startsWith('..')) return true;
+  const top = rel.split(path.sep)[0].toLowerCase();
+  if (BLOCKED_TOP_DIRS.indexOf(top) >= 0) return true;
+  const base = path.basename(filePath).toLowerCase();
+  // .env / .env.production 之类一律不对外
+  if (base === '.env' || base.indexOf('.env.') === 0) return true;
+  return false;
+}
+
 function serveStatic(req, res, pathname) {
   const safe = path.normalize(pathname).replace(/^(\.\.[/\\])+/, '');
   const filePath = path.join(PUBLIC_DIR, safe);
+
   if (filePath !== PUBLIC_DIR && !filePath.startsWith(PUBLIC_DIR + path.sep)) {
     res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
     return res.end('403 Forbidden');
   }
-  // 数据目录不对外暴露
-  if (filePath.startsWith(path.join(PUBLIC_DIR, 'data'))) return sendNotFound(res);
+  if (isBlockedPath(filePath)) return sendNotFound(res);
 
   fs.stat(filePath, (err, stat) => {
     if (err || !stat.isFile()) return sendNotFound(res);
     const ext = path.extname(filePath).toLowerCase();
     const isHtml = ext === '.html' || ext === '.htm';
+    // HTML 永远不缓存（发布后立即生效）；静态资源按环境决定是否允许浏览器缓存
+    const cache = isHtml
+      ? 'no-store, no-cache, must-revalidate'
+      : APP_CONFIG.static.cache
+        ? 'public, max-age=3600'
+        : 'no-cache';
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Content-Length': stat.size,
-      'Cache-Control': isHtml ? 'no-store, no-cache, must-revalidate' : 'no-cache',
+      'Cache-Control': cache,
     });
     fs.createReadStream(filePath).pipe(res);
   });
@@ -260,6 +341,22 @@ const server = http.createServer((req, res) => {
     return res.end('400 Bad Request');
   }
 
+  const isApi = pathname.indexOf('/api/') === 0;
+  if (isApi) {
+    const allowed = applyCors(req, res);
+    if (!allowed && req.method === 'OPTIONS') {
+      return sendJson(res, 403, { error: { message: '来源不在 CORS 白名单内' } });
+    }
+  }
+
+  if (req.method === 'OPTIONS') {
+    if (isApi) {
+      res.writeHead(204, { 'Content-Length': '0' });
+      return res.end();
+    }
+    return sendJson(res, 404, { error: { message: '接口不存在' } });
+  }
+
   if (req.method === 'POST') {
     if (pathname === '/api/rpc') return handleRpc(req, res);
     if (pathname === '/api/chat') return handleChat(req, res);
@@ -268,12 +365,29 @@ const server = http.createServer((req, res) => {
 
   if (pathname === '/api/faqs') return handleFaqs(req, res);
   if (pathname === '/api/models') return handleModels(req, res);
+  if (pathname === '/api/runtime-config') return handleRuntimeConfig(req, res);
 
   if (pathname === '/' || pathname === '') pathname = '/index.html';
   return serveStatic(req, res, pathname);
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log('哭包 · 智能客服已启动：http://localhost:' + PORT);
-  console.log('数据文件：' + store.DATA_FILE);
+server.listen(PORT, HOST, () => {
+  log.must('哭包 · 智能客服已启动  env=' + APP_CONFIG.nodeEnv + '  http://localhost:' + PORT);
+  log.info('静态目录：' + PUBLIC_DIR + (APP_CONFIG.static.cache ? '（允许浏览器缓存）' : '（不缓存）'));
+  log.info('数据文件：' + store.DATA_FILE);
+  log.info(
+    '限流：聊天 ' + APP_CONFIG.limits.chatMessagesPerMinute + ' 条/分/访客，分析 ' +
+      APP_CONFIG.limits.analyticsPerMinute + ' 次/分/操作者'
+  );
+  log.info('CORS：' + (APP_CONFIG.cors.allowAny ? '*' : APP_CONFIG.cors.origins.join(',') || '仅同源'));
+  if (APP_CONFIG.security.usingDefaultAdminCode) {
+    log.warn('正在使用默认管理员口令，部署前务必通过 CS_ADMIN_CODE 改为独立强口令');
+  }
+  if (!APP_CONFIG.model.enabled) {
+    log.info('模型通道：未配置（使用本地应答引擎）');
+  }
+});
+
+process.on('unhandledRejection', (e) => {
+  log.error('未捕获的 Promise 异常：' + (e && e.stack ? e.stack : e));
 });

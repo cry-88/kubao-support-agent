@@ -60,9 +60,12 @@ test.before(async () => {
     cwd: ROOT,
     env: Object.assign({}, process.env, {
       PORT: String(PORT),
+      NODE_ENV: 'test',
       CS_DATA_DIR: DATA_DIR,
       CS_ADMIN_CODE: ADMIN,
       CS_ANALYTICS_RATE: '6',
+      CS_CORS_ORIGINS: 'http://allowed.test',
+      CS_LOG_LEVEL: 'error',
     }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -227,6 +230,67 @@ test('导出：不带 p_dataset 的旧调用行为不变（逐条消息）', asy
   assert.ok(Array.isArray(r.items));
   assert.ok(r.items.length >= 2);
   assert.ok(Object.prototype.hasOwnProperty.call(r.items[0], 'conversation_id'));
+});
+
+test('环境：runtime-config 可读且不含密钥', async () => {
+  const r = await fetch(BASE + '/api/runtime-config');
+  assert.strictEqual(r.status, 200);
+  const j = await r.json();
+  assert.strictEqual(j.ok, true);
+  assert.strictEqual(j.env, 'test');
+  assert.strictEqual(j.features.analytics, true);
+  const raw = JSON.stringify(j);
+  assert.doesNotMatch(raw, /admin_code|api_key/i);
+  assert.ok(!raw.includes(ADMIN), '不得回显管理员口令');
+});
+
+test('CORS：白名单来源放行预检，未命中来源被拒', async () => {
+  const okRes = await fetch(BASE + '/api/rpc', {
+    method: 'OPTIONS',
+    headers: { Origin: 'http://allowed.test', 'Access-Control-Request-Method': 'POST' },
+  });
+  assert.strictEqual(okRes.status, 204);
+  assert.strictEqual(okRes.headers.get('access-control-allow-origin'), 'http://allowed.test');
+  assert.ok((okRes.headers.get('access-control-allow-methods') || '').includes('POST'));
+
+  const badRes = await fetch(BASE + '/api/rpc', {
+    method: 'OPTIONS',
+    headers: { Origin: 'http://evil.test', 'Access-Control-Request-Method': 'POST' },
+  });
+  assert.strictEqual(badRes.status, 403);
+  assert.strictEqual(badRes.headers.get('access-control-allow-origin'), null);
+});
+
+test('CORS：未命中来源的普通请求不写放行头', async () => {
+  const r = await fetch(BASE + '/api/models', { headers: { Origin: 'http://evil.test' } });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.headers.get('access-control-allow-origin'), null);
+});
+
+test('404 兜底：返回 404 状态 + 兜底页面（不是软 404）', async () => {
+  const r = await fetch(BASE + '/definitely-not-here');
+  assert.strictEqual(r.status, 404);
+  assert.match(r.headers.get('content-type') || '', /text\/html/);
+  const html = await r.text();
+  assert.match(html, /404/);
+});
+
+test('静态资源：正常返回，HTML 不缓存', async () => {
+  const js = await fetch(BASE + '/assets/config.js');
+  assert.strictEqual(js.status, 200);
+  assert.match(js.headers.get('content-type') || '', /javascript/);
+  assert.strictEqual(js.headers.get('cache-control'), 'no-cache');
+
+  const html = await fetch(BASE + '/index.html');
+  assert.strictEqual(html.status, 200);
+  assert.match(html.headers.get('cache-control') || '', /no-store/);
+});
+
+test('安全：服务端源码 / 数据 / 环境配置目录不可通过静态访问', async () => {
+  for (const p of ['/server/config.js', '/data/store.json', '/env/production.env', '/.env', '/test/http.test.js']) {
+    const r = await fetch(BASE + p);
+    assert.strictEqual(r.status, 404, p + ' 应被拦截');
+  }
 });
 
 test('分析限流：超过阈值返回可读提示（阈值由 CS_ANALYTICS_RATE 控制）', async () => {

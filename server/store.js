@@ -10,11 +10,14 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const DATA_DIR = process.env.CS_DATA_DIR || path.join(__dirname, '..', 'data');
+const config = require('./config');
+
+const APP_CONFIG = config.get();
+const DATA_DIR = APP_CONFIG.data.dir;
 const DATA_FILE = path.join(DATA_DIR, 'store.json');
 
 /* 部署后的默认口令：务必在首次使用时通过环境变量或界面改掉 */
-const ADMIN_CODE = process.env.CS_ADMIN_CODE || 'kubao-admin-2026';
+const ADMIN_CODE = process.env.CS_ADMIN_CODE || config.DEFAULT_ADMIN_CODE;
 const AGENT_CODES = [
   { name: '客服A', code: process.env.CS_AGENT_CODE_1 || 'kubao-agent-1' },
   { name: '客服B', code: process.env.CS_AGENT_CODE_2 || 'kubao-agent-2' },
