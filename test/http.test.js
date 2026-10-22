@@ -420,6 +420,24 @@ test('工单锁冲突：写 warn 级 ticket.claim result=conflict', async () => 
   assert.strictEqual(obj.conversation_id, start.conversation_id);
 });
 
+test('看板聚合接口：管理员一次拿到四块数据', async () => {
+  const r = await rpc('cs_admin_dashboard', { p_code: ADMIN, p_days: 14 });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.days, 14);
+  assert.strictEqual(r.read_only, true);
+  assert.strictEqual(r.trend.rows.length, 14);
+  assert.ok(r.intent && Array.isArray(r.intent.rows));
+  assert.ok(r.agents && Array.isArray(r.agents.rows));
+  assert.ok(r.gaps && Array.isArray(r.gaps.rows));
+  assert.ok(r.generated_at);
+});
+
+test('看板聚合接口：坐席口令被拒（不消耗分析额度）', async () => {
+  const r = await rpc('cs_admin_dashboard', { p_code: 'kubao-agent-1', p_days: 14 });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.error, 'unauthorized');
+});
+
 test('分析限流：超过阈值返回可读提示（阈值由 CS_ANALYTICS_RATE 控制）', async () => {
   let blocked = null;
   for (let i = 0; i < 12; i += 1) {

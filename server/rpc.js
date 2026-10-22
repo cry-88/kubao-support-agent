@@ -909,6 +909,17 @@ function csAdminAnalyticsMeta(p, db) {
   return analytics.meta();
 }
 
+/** 看板一次取齐四块数据（趋势 / 意图占比 / 坐席绩效 / 知识缺口） */
+function csAdminDashboard(p, db) {
+  if (!isAdmin(p.p_code, db)) return unauthorized();
+  return analytics.dashboard({
+    db,
+    days: p.p_days,
+    topN: p.p_top_n,
+    actor: 'admin:' + md5(p.p_code).slice(0, 8),
+  });
+}
+
 /* ============================== 分发 ============================== */
 
 const HANDLERS = {
@@ -941,6 +952,7 @@ const HANDLERS = {
   cs_admin_export: csAdminExport,
   cs_admin_analytics: csAdminAnalytics,
   cs_admin_analytics_meta: csAdminAnalyticsMeta,
+  cs_admin_dashboard: csAdminDashboard,
 };
 
 /**

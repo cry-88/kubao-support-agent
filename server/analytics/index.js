@@ -45,8 +45,7 @@ function meta() {
   };
 }
 
-/** 把查询结果压成一段给人看的回答（对话式 BI / 命令行自测共用） */
-function formatAnswer(result, maxRows) {
+/** 把查询结果压成一段给人看的回答（对话式 BI / 命令行自测共用） */function formatAnswer(result, maxRows) {
   if (!result || result.ok === false) {
     const tips = (result && result.suggestions) || [];
     return (result && result.error ? result.error : '查询失败') +
@@ -192,4 +191,73 @@ function resetRateLimit(key) {
   limiter.reset(key);
 }
 
-module.exports = { query, meta, formatAnswer, toCsv, resetRateLimit, limiter, todayKeyUtc8 };
+/**
+ * 看板聚合：一次请求返回四块数据（趋势 / 意图占比 / 坐席绩效 / 知识缺口）
+ *
+ * 为什么合一个接口：看板每次刷新要四份数据，拆成四次 RPC 会吃掉四份额度、
+ * 也可能出现"趋势是这一秒、坐席是下一秒"的口径漂移。这里共用同一个数据快照与限流计数。
+ */
+function dashboard(opts) {
+  const o = opts || {};
+  const db = o.db;
+  if (!db) return { ok: false, error: '数据源不可用' };
+
+  const actor = String(o.actor || 'unknown');
+  const limited = limiter.hit(actor);
+  if (!limited.ok) {
+    log.warn('触发看板查询限流', {
+      event: 'rate_limit',
+      scope: 'analytics',
+      actor,
+      retry_after_s: limited.retry_after,
+      result: 'limited',
+    });
+    return { ok: false, error: '看板刷新太频繁，请 ' + limited.retry_after + ' 秒后再试', code: 'rate_limited' };
+  }
+
+  const days = Math.min(Math.max(Number(o.days) || 14, 1), dslLib.MAX_DAYS);
+  const topN = Math.min(Math.max(Number(o.topN) || 5, 1), 20);
+  const wide = Math.max(days, 30); // 坐席绩效与知识缺口用更宽的窗口，14 天常常样本不足
+  const today = o.today || todayKeyUtc8();
+  const elapsed = Date.now();
+
+  const build = (raw) => {
+    const n = dslLib.normalize(raw);
+    if (!n.ok) return { ok: false, error: n.error };
+    return execute.run(n.dsl, db, today);
+  };
+
+  const trend = build({ metric: 'ticket_trend', days });
+  const intent = build({ metric: 'intent_share', days });
+  const agents = build({ metric: 'agent_workload', days: wide });
+  const gaps = build({ metric: 'knowledge_gaps', days: wide, limit: topN });
+
+  const payload = {
+    ok: true,
+    days,
+    trend_days: days,
+    wide_days: wide,
+    trend,
+    intent,
+    agents,
+    gaps,
+    generated_at: new Date().toISOString(),
+    read_only: true,
+  };
+
+  log.info('看板数据已生成', {
+    event: 'analytics.dashboard',
+    actor,
+    result: 'ok',
+    duration_ms: Date.now() - elapsed,
+    days,
+    wide_days: wide,
+    conversations: trend.total,
+    agents: agents.rows.length,
+    gaps: gaps.total,
+  });
+
+  return payload;
+}
+
+module.exports = { query, dashboard, meta, formatAnswer, toCsv, resetRateLimit, limiter, todayKeyUtc8 };
