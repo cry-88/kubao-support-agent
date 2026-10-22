@@ -32,6 +32,27 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 
+const NOT_FOUND_PAGE = path.join(ROOT, '404.html');
+
+/**
+ * 返回 404：优先用 404.html 的内容，状态码仍保持 404（不做软 404）
+ * 找不到兜底页时退回纯文本。
+ */
+function sendNotFound(res) {
+  fs.readFile(NOT_FOUND_PAGE, (err, buf) => {
+    if (err) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('404 Not Found');
+    }
+    res.writeHead(404, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Length': buf.length,
+      'Cache-Control': 'no-cache',
+    });
+    res.end(buf);
+  });
+}
+
 const server = http.createServer((req, res) => {
   let pathname;
   try {
@@ -52,10 +73,7 @@ const server = http.createServer((req, res) => {
   }
 
   fs.stat(filePath, (err, stat) => {
-    if (err || !stat.isFile()) {
-      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-      return res.end('404 Not Found');
-    }
+    if (err || !stat.isFile()) return sendNotFound(res);
     res.writeHead(200, {
       'Content-Type': MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
       'Content-Length': stat.size,
