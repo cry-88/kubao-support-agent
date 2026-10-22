@@ -13,6 +13,10 @@
 (function () {
   'use strict';
 
+  /** 数据面基址：默认同源相对路径；跨域/静态部署时由页面先设置 window.__CS_API_BASE__ */
+  var BASE = (typeof window.__CS_API_BASE__ === 'string' ? window.__CS_API_BASE__ : '').replace(/\/+$/, '');
+  function api(path) { return BASE + path; }
+
   function postJson(url, body) {
     return fetch(url, {
       method: 'POST',
@@ -25,7 +29,7 @@
   async function* streamChat(opts) {
     var res;
     try {
-      res = await fetch('/api/chat', {
+      res = await fetch(api('/api/chat'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -77,7 +81,7 @@
     database: {
       rpc: async function (name, params) {
         try {
-          var res = await postJson('/api/rpc', { name: name, params: params || {} });
+          var res = await postJson(api('/api/rpc'), { name: name, params: params || {} });
           if (res && res.data !== undefined) return { data: res.data };
           return { error: (res && res.error) || { message: '请求失败，请稍后重试' } };
         } catch (e) {
@@ -89,7 +93,7 @@
       from: function (table) {
         return {
           select: function () {
-            var p = fetch('/api/faqs')
+            var p = fetch(api('/api/faqs'))
               .then(function (r) { return r.json(); })
               .then(function (j) { return { data: (j && j.data) || [] }; })
               .catch(function () { return { data: [], error: { message: 'FAQ 加载失败' } }; });
@@ -107,7 +111,7 @@
       models: {
         list: async function () {
           try {
-            var r = await fetch('/api/models');
+            var r = await fetch(api('/api/models'));
             return await r.json();
           } catch (e) {
             return [];

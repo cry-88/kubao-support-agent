@@ -8,6 +8,9 @@
 const store = require('./store');
 const analytics = require('./analytics');
 const reply = require('./reply');
+const config = require('./config');
+
+const APP_CONFIG = config.get();
 
 const { md5 } = store;
 
@@ -182,7 +185,7 @@ function csGuestAppend(p, db) {
   if (!conv || conv.guest_key !== p.p_guest_key) {
     return { ok: false, error: 'conversation not found' };
   }
-  // 服务端硬限流：每访客每分钟 12 条用户消息
+  // 服务端硬限流：每访客每分钟 chatMessagesPerMinute 条用户消息（按环境可配）
   if (p.p_role === 'user') {
     const since = Date.now() - 60 * 1000;
     const recent = db.messages.filter((m) => {
@@ -191,7 +194,7 @@ function csGuestAppend(p, db) {
       const c = findConversation(db, m.conversation_id);
       return c && c.guest_key === p.p_guest_key;
     }).length;
-    if (recent >= 12) return { ok: false, error: 'rate_limited' };
+    if (recent >= APP_CONFIG.limits.chatMessagesPerMinute) return { ok: false, error: 'rate_limited' };
   }
   const id = pushMessage(db, conv.id, p.p_role, p.p_content, p.p_intent, p.p_meta);
   store.save();
@@ -293,19 +296,21 @@ function csLookupOrder(p, db) {
 function csConsoleLogin(p, db) {
   const code = String(p.p_code == null ? '' : p.p_code);
   const hash = md5(code);
-  const tenMinAgo = Date.now() - 10 * 60 * 1000;
+  const L = APP_CONFIG.limits;
+  const windowMs = L.loginWindowMinutes * 60 * 1000;
+  const since = Date.now() - windowMs;
   // 清理一天前的审计记录
   db.login_attempts = db.login_attempts.filter((a) => new Date(a.created_at).getTime() > Date.now() - 24 * 3600 * 1000);
 
   const globalFail = db.login_attempts.filter(
-    (a) => a.ok === false && new Date(a.created_at).getTime() > tenMinAgo
+    (a) => a.ok === false && new Date(a.created_at).getTime() > since
   ).length;
-  if (globalFail >= 20) return { ok: false, error: 'too_many_attempts' };
+  if (globalFail >= L.loginMaxGlobal) return { ok: false, error: 'too_many_attempts' };
 
   const codeFail = db.login_attempts.filter(
-    (a) => a.ok === false && a.code_hash === hash && new Date(a.created_at).getTime() > tenMinAgo
+    (a) => a.ok === false && a.code_hash === hash && new Date(a.created_at).getTime() > since
   ).length;
-  if (codeFail >= 5) return { ok: false, error: 'too_many_attempts' };
+  if (codeFail >= L.loginMaxPerCode) return { ok: false, error: 'too_many_attempts' };
 
   const who = operator(code, db);
   if (!who) {

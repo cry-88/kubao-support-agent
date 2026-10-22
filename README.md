@@ -17,12 +17,15 @@
 
 ## 当前版本：本地后端模式（开箱即跑）
 
-本仓库当前分支已改为**零依赖本地后端**，不再依赖云服务即可完整运行全部功能（对话、FAQ 检索、意图识别、订单查询、转人工、坐席工单、后台统计、知识缺口、CSV 导出）：
+本仓库当前分支已改为**零依赖本地后端**，不再依赖云服务即可完整运行全部功能（对话、FAQ 检索、意图识别、订单查询、转人工、坐席工单、后台统计、数据分析、知识缺口、CSV 导出）：
 
 ```bash
-node server.js          # 或 npm start
+node server.js          # 或 npm start（默认 development）
 # 打开 http://localhost:8080       用户端
 # 打开 http://localhost:8080/admin.html   坐席 / 管理后台
+
+NODE_ENV=production node server.js   # 切环境，详见「环境与配置」
+npm test                             # 74 条自测用例
 ```
 
 默认口令（首次启动写入 `data/store.json`，请立即修改）：
@@ -55,7 +58,7 @@ node server.js          # 或 npm start
 - [技术栈](#技术栈)
 - [目录结构](#目录结构)
 - [部署步骤](#部署步骤)
-- [环境变量](#环境变量)
+- [环境与配置（三套环境）](#环境与配置三套环境)
 - [界面截图](#界面截图)
 - [数据模型](#数据模型)
 - [服务端接口（RPC）](#服务端接口rpc)
@@ -253,20 +256,55 @@ INSERT INTO cs_agents (name, code) VALUES ('你的客服', '你的工号口令')
 
 ---
 
-## 环境变量
+## 环境与配置（三套环境）
 
-复制 [`.env.example`](.env.example) 为 `.env` 后填写。`.env` 已被 `.gitignore` 忽略，**不要提交真实值**。
+用 `NODE_ENV` 切换 `development` / `test` / `production`，配置全部走环境变量，代码里不写死。
 
-| 变量 | 用途 | 是否必需 |
-|---|---|---|
-| `CLOUD_ENDPOINT` | 数据面地址，写入 `config.js` | 是 |
-| `CLOUD_PUBLISHABLE_KEY` | 应用标识键（无权限，可公开） | 是 |
-| `CLOUD_OAUTH_RELAY_BASE_URL` | 微信扫码 / WorkBuddy 账号登录用 | 否 |
-| `CLOUD_RESOURCE_ID` | 云服务资源 ID | 是 |
-| `PORT` | 静态服务器端口，`server.js` 读取 | 否（默认 8080） |
+**加载优先级（后者覆盖前者）**：内置 profile 默认值 → `env/<NODE_ENV>.env` → 项目根 `.env` → 真实进程环境变量。
+
+```bash
+cp env/development.env.example env/development.env
+NODE_ENV=development node server.js      # 开发：debug 日志、放开 localhost 跨域、不缓存
+NODE_ENV=test node server.js             # 测试：warn 日志、无跨域、限流放宽
+NODE_ENV=production node server.js       # 生产：强校验 + info 日志 + 静态缓存
+```
+
+| 配置维度 | development | test | production |
+| --- | --- | --- | --- |
+| 日志等级 | `debug` | `warn` | `info` |
+| 静态缓存 | 不缓存 | 不缓存 | `max-age=3600`（HTML 永远 `no-store`） |
+| CORS | `localhost:8080/8099` | 仅同源 | 仅同源，**禁止 `*`** |
+| 聊天限流 | 12 条/分/访客 | 60 | 12 |
+| 分析限流 | 30 次/分 | 60 | 30 |
+| 请求体上限 | 2MB | 2MB | 1MB |
+| 口令校验 | 允许默认值（仅告警） | 允许 | **必须显式设置且非默认值，否则拒绝启动** |
+
+配置文件：
+
+- `.env.example` — 变量总表 + 说明（入库）
+- `env/development.env.example` / `env/test.env.example` / `env/production.env.example` — 三套环境模板（入库）
+- `env/*.env`、`.env` — 真实值，**已被 `.gitignore` 忽略**
+
+主要变量（完整列表见 `.env.example`）：
+
+| 变量 | 用途 | 默认 |
+| --- | --- | --- |
+| `NODE_ENV` | 环境切换 | `development` |
+| `PORT` / `HOST` | 监听地址 | `8080` / `0.0.0.0` |
+| `CS_STATIC_ROOT` | 静态资源根目录 | `.` |
+| `CS_NOT_FOUND_PAGE` | 404 兜底页 | `404.html` |
+| `CS_STATIC_CACHE` | 是否允许浏览器缓存静态资源 | 按环境 |
+| `CS_API_BASE` | 前端接口基址（留空=同源） | 空 |
+| `CS_CORS_ORIGINS` | 跨域白名单（逗号分隔） | 按环境 |
+| `CS_CHAT_RATE` / `CS_ANALYTICS_RATE` | 限流阈值 | 见上表 |
+| `CS_LOGIN_MAX_PER_CODE` / `CS_LOGIN_MAX_GLOBAL` / `CS_LOGIN_WINDOW_MIN` | 登录防爆破 | 5 / 20 / 10 |
+| `CS_LOG_LEVEL` | 日志等级 | 按环境 |
+| `CS_ADMIN_CODE` / `CS_AGENT_CODE_1/2` | 口令（仅首启初始化） | — |
+| `CS_DATA_DIR` | 数据目录 | `data` |
+| `CS_MODEL_PROVIDER` / `CS_MODEL_NAME` / `CS_MODEL_BASE_URL` / `CS_MODEL_API_KEY` | 模型通道（留空用本地引擎） | `local` |
 
 > [!NOTE]
-> 本项目是纯静态前端，页面运行时**不读取 `.env`**。这些变量用于「部署前替换 `config.js`」「本地/CI 启动参数」以及「初始化数据库时人工设置的口令备忘」。数据库口令只存在云端 `cs_settings` / `cs_agents` 表里，不进代码。
+> 启动后可以 `GET /api/runtime-config` 查看当前环境、限流阈值、模型是否已配置——它**只返回非敏感信息**，口令与密钥永远不会出现在响应里。
 
 ---
 

@@ -13,10 +13,15 @@ const dslLib = require('./dsl');
 const parseLib = require('./parse');
 const execute = require('./execute');
 const { createLimiter } = require('./rate');
+const config = require('../config');
+const logger = require('../logger');
+
+const APP_CONFIG = config.get();
+const log = logger.create(APP_CONFIG.log.level, 'analytics');
 
 const limiter = createLimiter({
   windowMs: 60000,
-  max: Number(process.env.CS_ANALYTICS_RATE) || 30,
+  max: APP_CONFIG.limits.analyticsPerMinute,
 });
 
 function todayKeyUtc8() {
@@ -149,14 +154,15 @@ async function query(opts) {
   });
 }
 
-/** 轻量审计日志；阶段4 会替换为结构化日志 */
+/** 轻量审计日志；阶段4 会替换为结构化日志（traceId / JSON 行） */
 function logQuery(actor, text, status, elapsed, result) {
   const oneLine = String(text == null ? '' : text).replace(/\s+/g, ' ').slice(0, 80);
-  console.log(
-    '[analytics] ' + status + ' actor=' + actor + ' elapsed=' + elapsed + 'ms' +
-      (result && result.metric ? ' metric=' + result.metric : '') +
-      ' q="' + oneLine + '"'
-  );
+  const line =
+    status + ' actor=' + actor + ' elapsed=' + elapsed + 'ms' +
+    (result && result.metric ? ' metric=' + result.metric : '') +
+    ' q="' + oneLine + '"';
+  if (status === 'ok') log.info(line);
+  else log.warn(line);
 }
 
 /** 导出 CSV 文本（BOM + CRLF，Excel 直接可开）；只走规则解析，不触发模型 */

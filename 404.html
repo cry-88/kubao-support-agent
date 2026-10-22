@@ -57,11 +57,9 @@
   </div>
   <script>
     (function () {
-      // 兼容两种部署路径：GitHub Pages 的子路径 /kubao-support-agent/ 与本地根路径 /
-      var marker = '/kubao-support-agent/';
-      var p = location.pathname;
-      var i = p.indexOf(marker);
-      var root = i >= 0 ? p.slice(0, i + marker.length) : '/';
+      // 兼容任意部署路径：从当前路径推导站点根（/kubao-support-agent/404.html → /kubao-support-agent/）
+      // 不再写死子路径，裸 IP 根路径、子目录、自定义域名都可复用
+      var root = location.pathname.replace(/[^/]*$/, '') || '/';
       var link = document.getElementById('backHome');
       if (link) link.setAttribute('href', root);
       setTimeout(function () { location.replace(root); }, 3000);

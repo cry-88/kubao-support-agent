@@ -12,6 +12,9 @@ venv/
 .env.development
 .env.production
 .env.test
+# 各环境真实配置（模板 *.env.example 要保留）
+env/*.env
+!env/*.env.example
 # 模板文件要保留
 !.env.example
 *.pem
