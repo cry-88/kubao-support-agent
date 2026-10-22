@@ -179,3 +179,128 @@
   font-size: 12.5px;
   line-height: 1.65;
 }
+
+/* =============================================================================
+   阶段5 · 数据分析看板（纯追加样式，不复用/覆盖原有类）
+   ============================================================================= */
+.cs-dashboard { margin-top: 16px; }
+.cs-hidden { display: none !important; }
+
+.cs-chart { min-height: 220px; }
+.cs-chart-empty {
+  padding: 30px 0;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 12.5px;
+}
+.cs-svg { width: 100%; height: auto; display: block; }
+.cs-axis { font-size: 10px; fill: #94a3b8; }
+
+.cs-legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 12px;
+  color: #475569;
+  margin-bottom: 6px;
+}
+.cs-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+.cs-legend-range { margin-left: auto; color: #94a3b8; font-size: 11.5px; }
+
+.cs-foot { margin-top: 10px; color: #64748b; font-size: 12px; line-height: 1.6; }
+
+/* 环形图 */
+.cs-pie-wrap { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+.cs-pie-canvas { width: 200px; flex: 0 0 auto; }
+.cs-donut { max-width: 200px; }
+.cs-donut-num { font-size: 26px; font-weight: 700; fill: #0f172a; }
+.cs-donut-label { font-size: 11px; fill: #94a3b8; }
+.cs-pie-side { flex: 1 1 180px; min-width: 160px; }
+.cs-pie-legend { list-style: none; margin: 0 0 4px; padding: 0; }
+.cs-pie-legend li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  padding: 4px 0;
+  color: #334155;
+}
+.cs-pie-legend i { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; }
+.cs-pie-legend .name { flex: 1; }
+.cs-pie-legend .num { color: #0f172a; font-weight: 600; }
+.cs-pie-legend .pct { color: #94a3b8; width: 46px; text-align: right; }
+
+/* 坐席绩效表 */
+.cs-table-wrap { overflow-x: auto; }
+.cs-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.cs-table th {
+  text-align: left;
+  color: #94a3b8;
+  font-weight: 600;
+  padding: 8px 10px;
+  border-bottom: 1px solid #eef1f6;
+  white-space: nowrap;
+}
+.cs-table td { padding: 10px; border-bottom: 1px solid #f5f7fb; color: #334155; vertical-align: middle; }
+.cs-table tr:last-child td { border-bottom: none; }
+.cs-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cs-agent-name { font-weight: 600; color: #0f172a; }
+.cs-rate { display: inline-flex; align-items: center; gap: 8px; }
+.cs-rate-track {
+  width: 64px;
+  height: 6px;
+  border-radius: 3px;
+  background: #eef1f6;
+  overflow: hidden;
+  display: inline-block;
+}
+.cs-rate-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #2b5cff, #7aa0ff);
+  border-radius: 3px;
+}
+.cs-rate-num { font-size: 11.5px; color: #64748b; font-variant-numeric: tabular-nums; }
+
+/* 知识缺口 Top */
+.cs-gap-list { display: flex; flex-direction: column; gap: 2px; }
+.cs-gap-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 4px;
+  border-bottom: 1px solid #f5f7fb;
+}
+.cs-gap-row:last-child { border-bottom: none; }
+.cs-gap-rank { width: 18px; color: #cbd5e1; font-size: 12px; }
+.cs-gap-badge {
+  background: #fff7ed;
+  color: #b45309;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.cs-gap-q {
+  flex: 1;
+  color: #0f172a;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-gap-meta { color: #94a3b8; font-size: 11.5px; white-space: nowrap; }
+.cs-link { color: #2b5cff; text-decoration: none; font-size: 12px; }
+.cs-link:hover { text-decoration: underline; }
+
+@media (max-width: 720px) {
+  .cs-pie-wrap { flex-direction: column; align-items: flex-start; }
+  .cs-gap-meta { display: none; }
+}
