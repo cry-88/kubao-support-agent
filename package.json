@@ -1,0 +1,15 @@
+{
+  "name": "kubao-support-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "哭包 · 智能客服 Agent —— 多轮对话 / FAQ 检索 / 意图识别 / 自动转人工 / 坐席工单 / 满意度统计",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "serve": "node server.js"
+  },
+  "dependencies": {}
+}

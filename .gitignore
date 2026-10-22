@@ -1,0 +1,74 @@
+# ===== 依赖 =====
+node_modules/
+.pnpm-store/
+.yarn/
+venv/
+.venv/
+
+# ===== 环境变量与密钥（绝不入库）=====
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+# 模板文件要保留
+!.env.example
+*.pem
+*.key
+*.p12
+secrets.json
+
+# 云服务应用标记（内部跟踪文件）
+.wbapp_*
+.*.genie
+
+# ===== 构建产物与缓存 =====
+dist/
+build/
+.cache/
+.parcel-cache/
+.sass-cache/
+.tmp/
+tmp/
+temp/
+coverage/
+
+# ===== 业务数据与运行时文件（含口令，绝不入库）=====
+# data/store.json 里保存会话、消息、管理员与坐席口令，禁止提交
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# ===== 日志与临时文件 =====
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+*.bak
+*.orig
+*~
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ===== 编辑器 / IDE =====
+.idea/
+.vscode/
+.history/
+.fleet/
+*.swp
+*.swo
+*.sublime-workspace
+
+# ===== 操作系统 =====
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+desktop.ini

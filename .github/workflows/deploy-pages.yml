@@ -1,0 +1,104 @@
+name: Deploy to GitHub Pages
+
+# 推送到 main 时自动：语法检查 → 敏感信息扫描 → 发布到 GitHub Pages
+# 也可在 Actions 页面手动触发（Run workflow）
+#
+# 站点地址：https://cry-88.github.io/kubao-support-agent/
+# 首次使用需在 Settings → Pages → Source 选择「GitHub Actions」
+#
+# ⚠️ 重要提醒
+# 云服务按「来源域名」做精确校验。GitHub Pages 的域名（*.github.io）与
+# 已登记的应用域名不同，因此 Pages 上的页面能打开，但数据读写与大模型调用
+# 会被拒绝。要在 Pages 上完整可用，需把 assets/config.js 换成允许该域名的
+# 云服务环境，或在上线域名上部署（推荐）。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: 检查
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 前端脚本语法检查
+        run: |
+          set -e
+          for f in assets/*.js; do
+            node --check "$f"
+            echo "✔ $f"
+          done
+
+      - name: 入口文件完整性
+        run: |
+          set -e
+          for f in index.html admin.html 404.html assets/config.js assets/app.js assets/kb.js schema.sql; do
+            test -f "$f" || { echo "::error::缺少 $f"; exit 1; }
+            echo "✔ $f"
+          done
+
+      - name: 敏感信息扫描
+        run: |
+          set -e
+          PATTERN='(sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|-----BEGIN)'
+          # 排除本工作流文件，否则会命中上面这行正则自身
+          if grep -rInE "$PATTERN" \
+               --include='*.js' --include='*.html' --include='*.md' --include='*.sql' --include='*.yml' \
+               --exclude='deploy-pages.yml' . ; then
+            echo "::error::检测到疑似密钥或私钥，已阻止部署"
+            exit 1
+          fi
+          echo "✔ 未发现常见密钥特征"
+
+      - name: 数据库脚本结构检查
+        run: |
+          set -e
+          FUNCS=$(grep -c '^CREATE OR REPLACE FUNCTION' schema.sql)
+          TABLES=$(grep -c '^CREATE TABLE' schema.sql)
+          echo "函数: $FUNCS / 表: $TABLES"
+          test "$FUNCS" -ge 28 || { echo "::error::函数数量异常"; exit 1; }
+          test "$TABLES" -ge 7 || { echo "::error::表数量异常"; exit 1; }
+
+  deploy:
+    name: 发布
+    needs: check
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+        with:
+          # 若仓库尚未启用 Pages，尝试自动开启（需 token 具备仓库管理权限）
+          enablement: true
+
+      - name: 打包静态站点
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: 发布
+        id: deployment
+        uses: actions/deploy-pages@v4

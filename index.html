@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>哭包 · 智能客服</title>
+  <meta name="description" content="支持多轮对话、FAQ 知识库检索、意图识别与自动转人工的智能客服" />
+  <link rel="stylesheet" href="assets/styles.css?v=20261022b" />
+</head>
+<body class="chat-page">
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <div class="brand-mark">哭</div>
+        <div>
+          <div class="name">哭包客服</div>
+          <div class="sub">在线支持中心</div>
+        </div>
+      </div>
+      <button class="new-chat" id="newChatBtn">＋ 新建对话</button>
+      <div class="sidebar-label">对话历史</div>
+      <div class="conv-list" id="convList"></div>
+      <div class="sidebar-foot">
+        <span id="guestLabel">访客</span>
+        <a href="admin.html">管理后台 →</a>
+      </div>
+    </aside>
+
+    <main class="chat">
+      <header class="chat-head">
+        <div class="avatar">哭</div>
+        <div class="meta">
+          <div class="title">哭包 · 智能客服</div>
+          <div class="status">
+            <span class="dot" id="statusDot" style="color:#0d9f6e"></span>
+            <span id="statusText">在线 · 智能应答</span>
+          </div>
+        </div>
+        <div class="spacer"></div>
+        <span class="pill muted hidden" id="summaryPill" title="较早的对话已压缩为摘要，节省上下文的同时不丢关键信息">上下文已摘要</span>
+        <span class="pill brand hidden" id="intentPill">意图：—</span>
+        <button class="ghost-btn" id="endBtn">结束咨询</button>
+      </header>
+
+      <div class="messages" id="messages"></div>
+
+      <div class="composer-wrap">
+        <div id="bannerWrap"></div>
+        <div id="ratingWrap"></div>
+        <div id="stopWrap"></div>
+        <div class="composer">
+          <textarea id="input" rows="1" placeholder="描述您遇到的问题，例如：我的订单 A2024001 到哪了？"></textarea>
+          <button class="send-btn" id="sendBtn" title="发送（Enter）" aria-label="发送">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 19V5M5 12l7-7 7 7" />
+            </svg>
+          </button>
+        </div>
+        <div class="composer-hint">
+          <span>Enter 发送 · Shift + Enter 换行 · 输入「转人工」可直接接入人工客服</span>
+          <span id="modelHint">模型加载中…</span>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="assets/config.js?v=20261022c"></script>
+  <script src="assets/kb.js?v=20261022c"></script>
+  <script src="assets/app.js?v=20261022c"></script>
+</body>
+</html>

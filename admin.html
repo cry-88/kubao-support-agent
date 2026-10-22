@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>哭包 · 客服工作台</title>
+  <link rel="stylesheet" href="assets/styles.css?v=20261022b" />
+  <link rel="stylesheet" href="assets/admin.css?v=20261022b" />
+</head>
+<body class="admin-body">
+  <!-- 口令门 -->
+  <div class="gate" id="gate">
+    <div class="gate-card">
+      <div class="brand-mark">哭</div>
+      <h1>客服工作台</h1>
+      <p>管理员可查看全部数据与统计；坐席登录后进入工单队列认领会话。</p>
+      <form id="gateForm">
+        <label for="codeInput">工号口令</label>
+        <input id="codeInput" type="password" autocomplete="current-password" placeholder="管理员或坐席口令" />
+        <div class="err" id="gateErr"></div>
+        <button type="submit" id="gateBtn">进入后台</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 控制台 -->
+  <div id="console" class="hidden">
+    <header class="admin-top">
+      <div class="brand-mark">哭</div>
+      <div>
+        <div class="name">哭包 · 客服工作台</div>
+        <div class="sub">对话记录与满意度统计</div>
+      </div>
+      <div class="spacer"></div>
+      <span class="pill" id="whoami">—</span>
+      <a class="ghost-btn" href="index.html" style="text-decoration:none;display:inline-flex;align-items:center;">返回前台</a>
+      <button class="ghost-btn" id="refreshBtn">刷新</button>
+      <button class="ghost-btn" id="logoutBtn">退出</button>
+    </header>
+
+    <main class="admin-main">
+      <div class="tabs">
+        <button class="tab" data-tab="queue">工单队列</button>
+        <button class="tab active" data-tab="overview">数据概览</button>
+        <button class="tab" data-tab="conversations">对话记录</button>
+        <button class="tab" data-tab="faq">知识库</button>
+        <button class="tab" data-tab="gaps">知识缺口</button>
+      </div>
+
+      <section id="tab-queue" class="hidden">
+        <div class="kpi-grid kpi-grid-4">
+          <div class="kpi">
+            <div class="label">待接入</div>
+            <div class="value" id="qWaiting">0</div>
+            <div class="foot">等待最久的排最前</div>
+          </div>
+          <div class="kpi">
+            <div class="label">我处理中</div>
+            <div class="value" id="qMine">0</div>
+            <div class="foot">已锁定给你的工单</div>
+          </div>
+          <div class="kpi">
+            <div class="label">超时工单</div>
+            <div class="value" id="qOverdue">0</div>
+            <div class="foot">等待超过 3 分钟</div>
+          </div>
+          <div class="kpi accent">
+            <div class="label">今日已解决</div>
+            <div class="value" id="qResolved">0</div>
+            <div class="foot">状态已关闭的会话</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+          <h3>待接入队列</h3>
+          <p class="hint">点「接入」领取工单，领取后会锁定给你，其他坐席看不到该工单</p>
+          <div id="queueList"></div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+          <h3>我处理中的工单</h3>
+          <p class="hint">接入后可直接回复用户；处理完点「标记解决」释放工单</p>
+          <div id="mineList"></div>
+        </div>
+
+        <div class="card">
+          <h3>其他坐席处理中</h3>
+          <p class="hint">仅用于避免重复接入</p>
+          <div id="othersList"></div>
+        </div>
+      </section>
+
+      <section id="tab-overview">
+        <div class="kpi-grid" id="kpiGrid"></div>
+        <div class="grid-2">
+          <div class="card">
+            <h3>满意度分布</h3>
+            <p class="hint">按星级统计已评价的会话</p>
+            <div id="scoreDist"></div>
+          </div>
+          <div class="card">
+            <h3>意图分布</h3>
+            <p class="hint">自动识别（规则 + 大模型）的用户意图</p>
+            <div id="intentDist"></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>近 14 天会话趋势</h3>
+          <p class="hint">每日新增会话数，鼠标悬停查看当日平均满意度</p>
+          <div id="trendChart"></div>
+          <div class="legend"><span><i></i>新增会话</span><span><i class="gray"></i>无会话</span></div>
+        </div>
+      </section>
+
+      <section id="tab-conversations" class="hidden">
+        <div class="filters" id="filters">
+          <button class="chip active" data-status="all">全部</button>
+          <button class="chip" data-status="active">进行中</button>
+          <button class="chip" data-status="handoff">待人工处理</button>
+          <button class="chip" data-status="closed">已结束</button>
+          <span style="flex:1"></span>
+          <button class="ghost-btn" id="exportBtn">导出 CSV</button>
+        </div>
+        <div class="table-wrap">
+          <table class="conv-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>访客</th>
+                <th>意图</th>
+                <th>状态</th>
+                <th>满意度</th>
+                <th>消息</th>
+                <th>最后一条消息</th>
+                <th>更新时间</th>
+              </tr>
+            </thead>
+            <tbody id="convBody"></tbody>
+          </table>
+          <div class="pager" id="pager"></div>
+        </div>
+      </section>
+
+      <section id="tab-faq" class="hidden">
+        <div class="card" style="margin-bottom:16px;">
+          <h3 id="faqFormTitle">新增 FAQ</h3>
+          <p class="hint">保存后即时生效，前台重新进入页面即可用上新的知识库</p>
+          <div class="faq-form">
+            <div class="field span2">
+              <label for="faqQuestion">标准问题</label>
+              <input id="faqQuestion" maxlength="120" placeholder="例如：退款多久能到账？" />
+            </div>
+            <div class="field span2">
+              <label for="faqAnswer">标准答案</label>
+              <textarea id="faqAnswer" rows="3" placeholder="给用户看的完整答案，越具体越好"></textarea>
+            </div>
+            <div class="field">
+              <label for="faqCategory">分类</label>
+              <select id="faqCategory">
+                <option value="refund">退款</option>
+                <option value="order">订单</option>
+                <option value="tech">技术支持</option>
+                <option value="general">通用</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="faqKeywords">关键词（英文逗号分隔）</label>
+              <input id="faqKeywords" placeholder="退款到账,多久,几天" />
+            </div>
+            <div class="field">
+              <label for="faqPriority">优先级 0-10</label>
+              <input id="faqPriority" type="number" min="0" max="10" value="5" />
+            </div>
+            <div class="field">
+              <label for="faqEnabled">状态</label>
+              <select id="faqEnabled">
+                <option value="true">启用</option>
+                <option value="false">停用</option>
+              </select>
+            </div>
+            <div class="form-actions span2">
+              <button class="ghost-btn" id="faqReset">清空</button>
+              <button class="ghost-btn primary" id="faqSave">保存</button>
+            </div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="conv-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>分类</th>
+                <th>问题</th>
+                <th>关键词</th>
+                <th>优先级</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="faqBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tab-gaps" class="hidden">
+        <div class="card">
+          <h3>知识缺口 · 未命中的提问</h3>
+          <p class="hint">最近 30 天里 FAQ 未检索到任何条目的用户提问，按出现次数排序。点「转为 FAQ」可直接补进知识库。</p>
+          <div id="gapList"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="drawer-mask" id="mask"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <div>
+        <div class="title" id="drawerTitle">会话详情</div>
+        <div class="sub" id="drawerSub"></div>
+      </div>
+      <div class="spacer"></div>
+      <button class="ghost-btn" id="drawerClose">关闭</button>
+    </div>
+    <div class="drawer-body" id="drawerBody"></div>
+    <div class="drawer-foot">
+      <textarea id="replyInput" placeholder="以人工客服身份回复该用户…"></textarea>
+      <div class="drawer-actions">
+        <button class="ghost-btn" id="releaseBtn" style="display:none;">释放工单</button>
+        <button class="ghost-btn" id="resolveBtn">标记已解决</button>
+        <button class="ghost-btn primary" id="replyBtn">发送回复</button>
+      </div>
+    </div>
+  </aside>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="assets/config.js?v=20261022c"></script>
+  <script src="assets/admin.js?v=20261022c"></script>
+</body>
+</html>
