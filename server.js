@@ -66,5 +66,5 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log('智能客服 · 本地预览：http://localhost:' + PORT);
+  console.log('哭包 · 本地预览：http://localhost:' + PORT);
 });
