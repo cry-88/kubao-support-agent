@@ -144,6 +144,35 @@ test('配置对象不可变（防止运行时被改写）', () => {
   }, TypeError);
 });
 
+test('可信代理：开发默认不信任，生产默认信任且只信环回', () => {
+  const dev = config.build({ NODE_ENV: 'development' });
+  assert.strictEqual(dev.proxy.trust, false);
+  assert.deepStrictEqual(dev.proxy.trusted, ['127.0.0.1', '::1']);
+
+  const prod = config.build({ NODE_ENV: 'production', CS_ADMIN_CODE: STRONG });
+  assert.strictEqual(prod.proxy.trust, true);
+  assert.strictEqual(prod.proxy.isTrusted('127.0.0.1'), true);
+  assert.strictEqual(prod.proxy.isTrusted('203.0.113.9'), false);
+});
+
+test('可信代理：可用环境变量覆盖信任开关与代理列表', () => {
+  const off = config.build({ NODE_ENV: 'production', CS_ADMIN_CODE: STRONG, CS_TRUST_PROXY: 'false' });
+  assert.strictEqual(off.proxy.trust, false);
+
+  const custom = config.build({ NODE_ENV: 'production', CS_ADMIN_CODE: STRONG, CS_TRUSTED_PROXIES: '10.0.0.5, 10.0.0.6' });
+  assert.deepStrictEqual(custom.proxy.trusted, ['10.0.0.5', '10.0.0.6']);
+  assert.strictEqual(custom.proxy.isTrusted('10.0.0.5'), true);
+  assert.strictEqual(custom.proxy.isTrusted('127.0.0.1'), false);
+});
+
+test('登录防爆破：IP 维度阈值可配置', () => {
+  const c = config.build({ NODE_ENV: 'development' });
+  assert.strictEqual(c.limits.loginMaxPerIp, 10);
+  const custom = config.build({ CS_LOGIN_MAX_PER_IP: '3' });
+  assert.strictEqual(custom.limits.loginMaxPerIp, 3);
+  assert.throws(() => config.build({ CS_LOGIN_MAX_PER_IP: '0' }), /CS_LOGIN_MAX_PER_IP/);
+});
+
 test('parseEnvText：跳过注释与空行，剥掉成对引号', () => {
   const parsed = config.parseEnvText(
     ['# 注释', '', 'A=1', 'B="hello world"', "C='x y'", 'D=', 'X==', 'X=2', 'no-equal-line'].join('\n')

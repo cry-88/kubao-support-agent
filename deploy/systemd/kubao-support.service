@@ -1,0 +1,60 @@
+; =============================================================================
+; 哭包智能客服 · systemd 单元
+;
+; 安装位置：/etc/systemd/system/kubao-support.service
+; 生效：    systemctl daemon-reload && systemctl enable --now kubao-support
+;
+; 关键点：
+;   - 用 app/ 软链指向 releases/<时间戳>，回滚＝改软链 + restart，秒级且可逆
+;   - 只监听 127.0.0.1：对外由 Nginx 承担 TLS 与限流，Node 不直接暴露
+;   - 崩溃自动重启；SIGTERM 触发应用内优雅退出（server.js 已在 10s 后强制兜底）
+;   - 权限最小化：独立用户 kubao、NoNewPrivileges、ProtectSystem=full
+; =============================================================================
+
+[Unit]
+Description=Kubao Support Agent (Node.js)
+Documentation=file:///opt/kubao-support/app/docs/stage6-deploy.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kubao
+Group=kubao
+WorkingDirectory=/opt/kubao-support/app
+
+; 环境变量（含口令，文件权限必须是 600，属主 root:kubao）
+EnvironmentFile=/etc/kubao-support/kubao-support.env
+
+; 若 node 不在 /usr/bin，用 `command -v node` 的实际路径替换
+ExecStart=/usr/bin/node /opt/kubao-support/app/server.js
+
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=20
+SuccessExitStatus=143
+
+; ---------- 安全加固 ----------
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/kubao-support/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+; ---------- 资源 ----------
+LimitNOFILE=65536
+MemoryMax=512M
+
+; ---------- 日志：交给 journald，不要在应用里自己切文件 ----------
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kubao-support
+
+[Install]
+WantedBy=multi-user.target

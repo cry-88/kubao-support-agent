@@ -38,6 +38,7 @@ const reply = require('./server/reply');
 const analytics = require('./server/analytics');
 const logger = require('./server/logger');
 const health = require('./server/health');
+const clientIp = require('./server/client-ip');
 
 // 日志按环境配置：生产 JSON 行、不带堆栈；开发可读文本、带堆栈
 logger.configure({
@@ -246,7 +247,7 @@ async function handleChat(req, res) {
       const result = await analytics.query({
         text: lastUserText(messages),
         db: store.db,
-        actor: 'chat:' + store.md5(authCode).slice(0, 8),
+        actor: 'chat:' + store.md5(authCode).slice(0, 8) + '@' + (client.ip || '-'),
         modelParse: reply.parseAnalyticsFallback,
       });
       text = analytics.formatAnswer(result);
@@ -369,8 +370,15 @@ function pickTraceId(req) {
   return logger.newTraceId();
 }
 
+/** 解析真实客户端 IP：默认只看 socket，开启可信代理后才采信 X-Forwarded-For */
 function clientAddr(req) {
-  return (req.socket && req.socket.remoteAddress) || '-';
+  const res = clientIp.resolve({
+    peer: (req.socket && req.socket.remoteAddress) || '',
+    xff: req.headers['x-forwarded-for'],
+    trust: APP_CONFIG.proxy.trust,
+    trusted: APP_CONFIG.proxy.trusted,
+  });
+  return res;
 }
 
 /** 任何未预料的异常都收敛成一句人话，堆栈只进日志 */
@@ -454,8 +462,11 @@ const server = http.createServer((req, res) => {
   const traceId = pickTraceId(req);
   res.setHeader('X-Trace-Id', traceId);
 
+  // 真实客户端 IP 在入口算一次，放进上下文：日志、限流键、登录审计都用同一份
+  const client = clientAddr(req);
+
   // 整个请求（含异步链路）都跑在同一个 traceId 上下文里，业务代码不用关心
-  logger.withContext({ traceId }, () => {
+  logger.withContext({ traceId, ip: client.ip, ip_source: client.source }, () => {
     const elapsed = logger.timer();
     let settled = false;
 
@@ -469,7 +480,8 @@ const server = http.createServer((req, res) => {
           path: pathname,
           status: res.statusCode,
           duration_ms: elapsed(),
-          remote_addr: clientAddr(req),
+          remote_addr: client.ip,
+          ip_source: client.source,
         },
         extra || {}
       ));
@@ -527,3 +539,21 @@ process.on('uncaughtException', (e) => {
   process.exitCode = 1;
   setTimeout(() => process.exit(1), 50);
 });
+
+/* 优雅退出：systemd 发 SIGTERM 时先停止接新连接，再给 10 秒让在途请求收尾 */
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log.must('收到 ' + signal + '，开始优雅退出');
+  server.close(() => {
+    log.info('服务已停止');
+    process.exit(0);
+  });
+  setTimeout(() => {
+    log.warn('优雅退出超时，强制结束');
+    process.exit(1);
+  }, 10000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

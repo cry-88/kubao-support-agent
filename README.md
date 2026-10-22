@@ -60,6 +60,7 @@ npm test                             # 74 条自测用例
 - [部署步骤](#部署步骤)
 - [环境与配置（三套环境）](#环境与配置三套环境)
 - [日志、链路与健康检查](#日志链路与健康检查)
+- [部署到 Linux 服务器](#部署到-linux-服务器)
 - [界面截图](#界面截图)
 - [数据模型](#数据模型)
 - [服务端接口（RPC）](#服务端接口rpc)
@@ -357,6 +358,40 @@ curl -s http://localhost:8080/health | jq
 **异常收敛**：参数错误 400、请求体超限 413、业务失败 `{ok:false,error}`、未预料异常 500——响应体永远是中文人话，堆栈只进日志；500 响应里带 `trace_id` 便于对齐日志。
 
 ---
+## 部署到 Linux 服务器
+
+单机方案：**Node（systemd 常驻，只监听 127.0.0.1）+ Nginx（TLS 与真实 IP 透传）**，零容器、零 npm 依赖。
+
+```bash
+./scripts/package.sh                       # 本地打包（含 sha256 与包内容自检）
+scp dist/kubao-support-*.tar.gz* <user>@<host>:/tmp/
+
+# 服务器
+sudo /opt/kubao-support/app/deploy/install.sh -p /tmp/kubao-support-*.tar.gz
+sudo systemctl status kubao-support
+curl -s http://127.0.0.1:8080/health
+```
+
+| 场景 | 配置文件 |
+| --- | --- |
+| 域名 + HTTPS | `deploy/nginx/kubao-support.conf`（含 ACME 校验、HSTS、SSE 关闭缓冲） |
+| 裸 IP / 内网 | `deploy/nginx/kubao-support-ip.conf`（无 TLS，仅内网或临时演示） |
+
+日常操作：
+
+```bash
+sudo deploy/rollback.sh --list        # 看有哪些版本
+sudo deploy/rollback.sh               # 回滚到上一版（只切代码，不动 data/）
+sudo deploy/backup.sh                 # 备份数据与环境变量（权限 600，保留 14 天）
+sudo journalctl -u kubao-support -f   # 结构化日志
+```
+
+目录规划、命令清单（含风险等级与回滚方式）、上线检查清单见 [`docs/stage6-deploy.md`](docs/stage6-deploy.md)。
+
+> **单实例约束**：数据存于单个 JSON 文件（整文件原子替换），多进程会互相覆盖。需要水平扩展请先迁移到 PostgreSQL（阶段 8 提供步骤）。
+
+---
+
 ## 界面截图
 
 截图统一放在 [`docs/screenshots/`](docs/screenshots/)，文件名与页面一一对应：
